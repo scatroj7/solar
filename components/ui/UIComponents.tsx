@@ -14,8 +14,8 @@ export const CardHeader = ({ children, className }: { children?: React.ReactNode
   <div className={cn("p-6 pb-2", className)}>{children}</div>
 );
 
-export const CardTitle = ({ children }: { children?: React.ReactNode }) => (
-  <h3 className="text-xl font-semibold text-navy-900 leading-none tracking-tight">{children}</h3>
+export const CardTitle = ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+  <h3 className={cn("text-xl font-semibold text-navy-900 leading-none tracking-tight", className)}>{children}</h3>
 );
 
 export const CardContent = ({ children, className }: { children?: React.ReactNode; className?: string }) => (
@@ -23,8 +23,8 @@ export const CardContent = ({ children, className }: { children?: React.ReactNod
 );
 
 // --- Button ---
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'outline' | 'ghost' | 'danger';
+export interface ButtonProps extends React.ComponentProps<'button'> {
+  variant?: 'primary' | 'outline' | 'ghost' | 'danger' | 'success';
   size?: 'sm' | 'md' | 'lg';
 }
 
@@ -36,6 +36,7 @@ export const Button = ({ className, variant = 'primary', size = 'md', ...props }
     outline: "border border-slate-200 bg-transparent hover:bg-slate-100 text-slate-900",
     ghost: "bg-transparent hover:bg-slate-100 text-slate-900",
     danger: "bg-red-600 text-white hover:bg-red-700",
+    success: "bg-green-600 text-white hover:bg-green-700",
   };
 
   const sizes = {
@@ -50,7 +51,7 @@ export const Button = ({ className, variant = 'primary', size = 'md', ...props }
 };
 
 // --- Input ---
-export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputProps extends React.ComponentProps<'input'> {
   label?: string;
   error?: string;
 }
@@ -71,7 +72,7 @@ export const Input = ({ label, error, className, ...props }: InputProps) => (
 );
 
 // --- Select ---
-export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+export interface SelectProps extends React.ComponentProps<'select'> {
   label?: string;
   options: { label: string; value: string | number }[];
 }
@@ -113,17 +114,20 @@ export const TabsList = ({ children, className }: { children?: React.ReactNode; 
 export const TabsTrigger = ({ 
   active, 
   onClick, 
-  children 
+  children,
+  className 
 }: { 
   active: boolean; 
   onClick: () => void; 
-  children?: React.ReactNode 
+  children?: React.ReactNode;
+  className?: string; 
 }) => (
   <button
     onClick={onClick}
     className={cn(
       "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium ring-offset-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
-      active ? "bg-white text-navy-900 shadow-sm" : "hover:bg-gray-200 hover:text-slate-900"
+      active ? "bg-white text-navy-900 shadow-sm" : "hover:bg-gray-200 hover:text-slate-900",
+      className
     )}
   >
     {children}
@@ -136,7 +140,7 @@ export const TabsContent = ({ active, children }: { active: boolean; children?: 
 };
 
 // --- Badge ---
-export const Badge = ({ children, variant = 'default' }: { children: React.ReactNode; variant?: 'default' | 'success' | 'warning' | 'info' }) => {
+export const Badge = ({ children, variant = 'default' }: { children?: React.ReactNode; variant?: 'default' | 'success' | 'warning' | 'info' }) => {
   const styles = {
     default: "bg-slate-100 text-slate-800",
     success: "bg-green-100 text-green-800",
@@ -160,3 +164,45 @@ export const Toast = ({ message, show, onClose }: { message: string, show: boole
         </div>
     )
 }
+
+// --- Progress ---
+export const Progress = ({ value, max = 100, className }: { value: number; max?: number; className?: string }) => (
+  <div className={cn("w-full bg-slate-200 rounded-full h-2.5 overflow-hidden", className)}>
+    <div 
+      className="bg-energy-500 h-2.5 rounded-full transition-all duration-500 ease-out" 
+      style={{ width: `${(value / max) * 100}%` }}
+    />
+  </div>
+);
+
+// --- Dialog / Modal ---
+export const Dialog = ({ 
+    isOpen, 
+    onClose, 
+    title, 
+    children 
+}: { 
+    isOpen: boolean; 
+    onClose: () => void; 
+    title: string; 
+    children?: React.ReactNode 
+}) => {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
+                <div className="flex justify-between items-center p-4 border-b border-slate-100">
+                    <h3 className="font-semibold text-lg text-navy-900">{title}</h3>
+                    <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+                </div>
+                <div className="p-4 max-h-[80vh] overflow-y-auto">
+                    {children}
+                </div>
+                <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+                    <Button variant="outline" size="sm" onClick={onClose}>Kapat</Button>
+                </div>
+            </div>
+        </div>
+    );
+};

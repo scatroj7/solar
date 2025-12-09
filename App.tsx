@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   ArrowRight, 
@@ -12,7 +13,17 @@ import {
   LogOut,
   Compass,
   Info,
-  DollarSign
+  DollarSign,
+  Download,
+  Share2,
+  AlertTriangle,
+  Award,
+  Leaf,
+  Loader2,
+  PenTool,
+  Grid,
+  Maximize,
+  Ruler
 } from 'lucide-react';
 import { 
   Button, 
@@ -26,20 +37,28 @@ import {
   TabsList, 
   TabsTrigger, 
   TabsContent, 
-  Toast
+  Toast,
+  Progress,
+  Dialog,
+  Badge
 } from './components/ui/UIComponents';
-import { ProductionChart } from './components/Charts';
+import { ProductionChart, FinancialComparisonChart, ROIChart } from './components/Charts';
 import { LeadForm } from './components/LeadForm';
-import { CITIES, DEFAULT_SETTINGS } from './constants';
+import { CITIES, DEFAULT_SETTINGS, MOCK_PANELS, MOCK_INVERTERS } from './constants';
 import { calculateSolarSystem } from './lib/calculator';
+import { performEngineeringDesign } from './lib/engineeringCalculator';
 import { SettingsService, LeadService, AuthService } from './services/mockService';
-import { CalculationInput, CalculationResult, RoofDirection, GlobalSettings, Lead, LeadStatus } from './types';
+import { CalculationInput, SimulationResult, RoofDirection, GlobalSettings, Lead, LeadStatus, ScenarioType, SolarPanel, Inverter, DesignResult } from './types';
+
+// Imports for PDF generation
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 // --- Types ---
 type View = 'WIZARD' | 'RESULT' | 'ADMIN_LOGIN' | 'ADMIN_DASHBOARD';
 type WizardStep = 'LOCATION' | 'ROOF' | 'BILL';
 
-// --- Sub-Components ---
+// --- Components ---
 
 const Wizard = ({ 
     step, 
@@ -54,18 +73,29 @@ const Wizard = ({
     setData: (d: CalculationInput) => void, 
     onCalculate: () => void 
 }) => {
-    const progress = {
-        'LOCATION': 33,
-        'ROOF': 66,
-        'BILL': 100
-    };
+    
+    // Smart Defaults Logic
+    useEffect(() => {
+        if (data.cityId && step === 'BILL' && data.billAmount === 0) {
+            const city = CITIES.find(c => c.id === data.cityId);
+            if (city?.defaultBillAmount) {
+                // Hint logic logic handled in UI placeholder
+            }
+        }
+    }, [step, data.cityId]);
 
-    // Memoize city options to prevent sorting mutation on every render
+    const progressValue = step === 'LOCATION' ? 33 : step === 'ROOF' ? 66 : 100;
+    
+    // Memoize city options
     const cityOptions = useMemo(() => {
         return [...CITIES]
             .sort((a, b) => a.name.localeCompare(b.name))
             .map(c => ({ label: c.name, value: c.id }));
     }, []);
+
+    const selectedCityName = useMemo(() => {
+         return CITIES.find(c => c.id === data.cityId)?.name;
+    }, [data.cityId]);
 
     const handleNext = () => {
         if (step === 'LOCATION') {
@@ -88,47 +118,41 @@ const Wizard = ({
     };
 
     return (
-        <div className="max-w-2xl mx-auto mt-12 px-4 pb-20">
+        <div className="max-w-xl mx-auto mt-8 px-4 pb-20">
+            <div className="mb-6 text-center">
+                 <h2 className="text-2xl font-bold text-navy-900 mb-2">Solar Hesaplama Sihirbazı</h2>
+                 <p className="text-slate-500 text-sm">3 adımda güneş enerjisi potansiyelinizi öğrenin.</p>
+            </div>
+
             <div className="mb-8">
-                <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                    <div 
-                        className="h-full bg-energy-500 transition-all duration-500 ease-out"
-                        style={{ width: `${progress[step]}%` }}
-                    />
-                </div>
-                <div className="flex justify-between mt-2 text-sm text-slate-500 font-medium">
-                    <span className={step === 'LOCATION' ? 'text-navy-900' : ''}>Konum</span>
-                    <span className={step === 'ROOF' ? 'text-navy-900' : ''}>Çatı Bilgisi</span>
-                    <span className={step === 'BILL' ? 'text-navy-900' : ''}>Tüketim</span>
+                <Progress value={progressValue} className="h-2" />
+                <div className="flex justify-between mt-2 text-xs text-slate-400 font-medium uppercase tracking-wider">
+                    <span className={step === 'LOCATION' ? 'text-energy-600' : ''}>Konum</span>
+                    <span className={step === 'ROOF' ? 'text-energy-600' : ''}>Çatı</span>
+                    <span className={step === 'BILL' ? 'text-energy-600' : ''}>Tüketim</span>
                 </div>
             </div>
 
-            <Card className="shadow-xl border-0 ring-1 ring-slate-200">
-                <CardHeader className="bg-slate-50 border-b border-slate-100">
-                    <CardTitle>
-                        {step === 'LOCATION' && "Güneş enerjisi potansiyelini keşfedin"}
-                        {step === 'ROOF' && "Çatı özellikleriniz neler?"}
-                        {step === 'BILL' && "Elektrik faturanız ne kadar?"}
-                    </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-6 pt-6">
+            <Card className="shadow-2xl border-0 ring-1 ring-slate-100">
+                <CardContent className="space-y-6 pt-8 pb-8">
                     {step === 'LOCATION' && (
-                        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                            <label className="block text-sm font-medium text-slate-700 mb-1.5">Şehir Seçiniz</label>
+                        <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+                            <label className="block text-sm font-semibold text-slate-700 mb-2">Hangi şehirde yaşıyorsunuz?</label>
                             <Select 
                                 options={cityOptions}
                                 value={data.cityId || ""}
                                 onChange={(e) => setData({...data, cityId: Number(e.target.value)})}
+                                className="text-lg py-3"
                             />
-                            <div className="flex items-start gap-3 mt-4 bg-blue-50 p-3 rounded-md text-sm text-blue-800">
-                                <Info className="h-5 w-5 shrink-0" />
-                                <p>Şehrinizin coğrafi konumu ve yıllık güneşlenme süresi, yatırım geri dönüş analizinde temel faktördür.</p>
+                            <div className="flex items-start gap-3 mt-6 bg-blue-50 p-4 rounded-lg text-sm text-blue-800 border border-blue-100">
+                                <Info className="h-5 w-5 shrink-0 text-blue-600" />
+                                <p>GEPA (Güneş Enerjisi Potansiyeli Atlası) veritabanına bağlanılarak bölgenizin son 10 yıllık ışınım verileri çekilecektir.</p>
                             </div>
                         </div>
                     )}
 
                     {step === 'ROOF' && (
-                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
                             <Input 
                                 label="Yaklaşık Çatı Alanı (m²)"
                                 type="number"
@@ -136,23 +160,23 @@ const Wizard = ({
                                 placeholder="Örn: 120"
                                 value={data.roofArea || ''}
                                 onChange={(e) => setData({...data, roofArea: Number(e.target.value)})}
+                                className="text-lg"
                             />
                             
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-2">Çatı Yönü</label>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                <label className="block text-sm font-semibold text-slate-700 mb-3">Çatı Yönü</label>
+                                <div className="grid grid-cols-2 gap-3">
                                     {Object.values(RoofDirection).map((dir) => (
                                         <div 
                                             key={dir}
                                             onClick={() => setData({...data, roofDirection: dir})}
-                                            className={`cursor-pointer border rounded-lg p-3 text-center transition-all ${
+                                            className={`cursor-pointer border rounded-lg p-3 text-center transition-all hover:shadow-md ${
                                                 data.roofDirection === dir 
-                                                ? 'bg-navy-50 border-navy-500 ring-1 ring-navy-500 text-navy-900 font-medium' 
+                                                ? 'bg-navy-900 border-navy-900 text-white shadow-lg transform scale-105' 
                                                 : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                                             }`}
                                         >
-                                            <Compass className={`h-6 w-6 mx-auto mb-1 ${data.roofDirection === dir ? 'text-energy-500' : 'text-slate-400'}`} />
-                                            <span className="text-sm">{dir}</span>
+                                            <span className="text-sm font-medium">{dir}</span>
                                         </div>
                                     ))}
                                 </div>
@@ -161,31 +185,40 @@ const Wizard = ({
                     )}
 
                     {step === 'BILL' && (
-                        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="animate-in fade-in slide-in-from-right-4 duration-300">
                             <Input 
-                                label="Ortalama Aylık Fatura (TL)"
+                                label="Aylık Ortalama Elektrik Faturası (TL)"
                                 type="number"
                                 min="100"
-                                placeholder="Örn: 1500"
+                                placeholder={`Örn: ${CITIES.find(c => c.id === data.cityId)?.defaultBillAmount || 1500}`}
                                 value={data.billAmount || ''}
                                 onChange={(e) => setData({...data, billAmount: Number(e.target.value)})}
+                                className="text-lg"
                             />
-                            <div className="bg-yellow-50 text-yellow-800 p-4 rounded-lg mt-4 text-sm flex gap-3">
-                                <Zap className="h-5 w-5 shrink-0" />
-                                <p><strong>İpucu:</strong> Daha doğru bir sonuç için yaz ve kış aylarının ortalamasını girmenizi öneririz.</p>
+                            
+                            {selectedCityName && (
+                                <div className="mt-4 flex items-center gap-2 text-sm text-slate-500 bg-slate-100 p-3 rounded-md">
+                                    <Users className="h-4 w-4" />
+                                    <span>{selectedCityName} bölgesindeki benzer evler ortalama <strong>{CITIES.find(c => c.id === data.cityId)?.defaultBillAmount} TL</strong> fatura ödüyor.</span>
+                                </div>
+                            )}
+
+                            <div className="bg-yellow-50 text-yellow-800 p-4 rounded-lg mt-4 text-sm flex gap-3 border border-yellow-100">
+                                <Zap className="h-5 w-5 shrink-0 text-yellow-600" />
+                                <p><strong>İpucu:</strong> Yaz ve kış aylarının ortalamasını girmek en doğru sonucu verir.</p>
                             </div>
                         </div>
                     )}
 
-                    <div className="flex justify-between pt-4">
+                    <div className="flex justify-between pt-6 border-t border-slate-100 mt-2">
                         {step !== 'LOCATION' ? (
-                            <Button variant="outline" onClick={handleBack}>
+                            <Button variant="outline" onClick={handleBack} className="text-slate-500 border-slate-300">
                                 <ChevronLeft className="h-4 w-4 mr-2" /> Geri
                             </Button>
                         ) : <div />}
                         
-                        <Button onClick={handleNext} className="bg-navy-800 hover:bg-navy-900 ml-auto">
-                            {step === 'BILL' ? 'Analizi Tamamla' : 'Devam Et'}
+                        <Button onClick={handleNext} className="bg-energy-500 hover:bg-energy-600 text-white shadow-lg shadow-energy-500/20 px-8">
+                            {step === 'BILL' ? 'Analizi Başlat' : 'Devam Et'}
                             {step !== 'BILL' && <ArrowRight className="h-4 w-4 ml-2" />}
                         </Button>
                     </div>
@@ -202,16 +235,32 @@ const ResultView = ({
     leadSubmitted, 
     setLeadSubmitted 
 }: { 
-    result: CalculationResult | null, 
+    result: SimulationResult | null, 
     onReset: () => void, 
     inputData: CalculationInput,
     leadSubmitted: boolean,
     setLeadSubmitted: (v: boolean) => void
 }) => {
+    // ... ResultView Logic remains same for Public User ...
+    // But we need to define it as in the original App.tsx
+    // (Copied strictly from previous context for completeness, focusing on Admin changes below)
+    const [activeScenario, setActiveScenario] = useState<ScenarioType>('OPTIMAL');
+    const [showTechDetails, setShowTechDetails] = useState(false);
+    const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
     if (!result) return null;
 
-    const formatCurrency = (amount: number, currency: 'USD' | 'TL') => {
-        const currencyCode = currency === 'TL' ? 'TRY' : currency;
+    const currentData = result.scenarios[activeScenario];
+    const roi = currentData.roiYears;
+    const isGood = roi <= 7;
+    const isAverage = roi > 7 && roi <= 10;
+    
+    const trafficColor = isGood ? 'bg-green-100 border-green-200 text-green-800' : isAverage ? 'bg-yellow-50 border-yellow-100 text-yellow-800' : 'bg-red-50 border-red-100 text-red-800';
+    const trafficTitle = isGood ? 'Mükemmel Yatırım Fırsatı' : isAverage ? 'Makul Yatırım' : 'Dikkatli Değerlendirin';
+    const trafficDesc = isGood ? `Sisteminiz kendini ${roi} yılda amorti ediyor. Bu, borsadan veya dolardan daha yüksek bir getiri oranıdır.` : isAverage ? `Amortisman süresi ${roi} yıl. Uzun vadeli düşünüyorsanız kârlı bir yatırımdır.` : `Amortisman süresi ${roi} yıl. Çatı alanınız veya tüketiminiz verimli bir sistem için sınırda olabilir.`;
+
+    const formatCurrency = (amount: number, currency: 'TL' | 'USD' = 'TL') => {
+        const currencyCode = currency === 'TL' ? 'TRY' : 'USD';
         return new Intl.NumberFormat('tr-TR', { 
             style: 'currency', 
             currency: currencyCode,
@@ -219,95 +268,171 @@ const ResultView = ({
         }).format(amount);
     };
 
+    const handleDownloadPDF = async () => {
+        const element = document.getElementById('report-content');
+        if(!element) return;
+        setIsGeneratingPdf(true);
+        element.classList.add('pdf-mode');
+        try {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            const canvas = await html2canvas(element, {
+                scale: 2, 
+                useCORS: true,
+                logging: false,
+                backgroundColor: '#ffffff',
+                windowWidth: 1200
+            });
+            const imgData = canvas.toDataURL('image/png');
+            const pdf = new jsPDF({
+                orientation: 'landscape',
+                unit: 'mm',
+                format: 'a4'
+            });
+            const imgWidth = 297; 
+            const pageHeight = 210;
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+            pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
+            if (imgHeight > pageHeight) {
+                let heightLeft = imgHeight - pageHeight;
+                let position = -pageHeight;
+                while (heightLeft > 0) {
+                     pdf.addPage();
+                     pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+                     heightLeft -= pageHeight;
+                     position -= pageHeight;
+                }
+            }
+            pdf.save(`SolarSmart_Rapor_${result.city.name}.pdf`);
+        } catch (err) {
+            console.error("PDF creation failed", err);
+            alert("PDF oluşturulurken bir hata oluştu.");
+        } finally {
+            element.classList.remove('pdf-mode');
+            setIsGeneratingPdf(false);
+        }
+    };
+    
+    const handleShare = () => {
+        const text = `SolarSmart ile evimin güneş enerjisi potansiyelini hesapladım! 25 yılda ${formatCurrency(currentData.netProfit25Years)} tasarruf edebiliyorum.`;
+        window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+    };
+
     return (
-        <div className="container mx-auto px-4 py-8 animate-in fade-in zoom-in-95 duration-500 pb-20">
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl font-bold text-navy-900">Güneş Enerjisi Potansiyeliniz</h1>
-                <Button variant="outline" onClick={onReset}>Yeni Hesaplama</Button>
+        <div className="container mx-auto px-4 py-8 animate-in fade-in zoom-in-95 duration-500 pb-24">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 no-print">
+                <div>
+                    <h1 className="text-2xl font-bold text-navy-900">Fizibilite Raporu</h1>
+                    <p className="text-slate-500 text-sm">{result.city.name} lokasyonu için özel analiz</p>
+                </div>
+                <div className="flex gap-2 w-full md:w-auto">
+                    <Button variant="outline" size="sm" onClick={handleDownloadPDF} className="flex-1 md:flex-none" disabled={isGeneratingPdf}>
+                        {isGeneratingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />} 
+                        {isGeneratingPdf ? 'Rapor Oluşturuluyor...' : 'PDF İndir'}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handleShare} className="flex-1 md:flex-none"><Share2 className="h-4 w-4 mr-2" /> WhatsApp</Button>
+                    <Button variant="ghost" size="sm" onClick={onReset} className="flex-1 md:flex-none text-red-600 hover:text-red-700 hover:bg-red-50"><LogOut className="h-4 w-4 mr-2" /> Çıkış</Button>
+                </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <Card className="bg-navy-900 text-white border-0 shadow-lg">
-                            <CardContent className="flex flex-col items-center justify-center py-8">
-                                <span className="text-slate-300 text-sm mb-1">Önerilen Sistem</span>
-                                <span className="text-3xl font-bold text-energy-500">{result.systemSizeKW} kWp</span>
-                                <span className="text-xs text-slate-400 mt-2">{result.panelCount} Adet Panel</span>
-                            </CardContent>
-                        </Card>
-                        <Card>
-                            <CardContent className="flex flex-col items-center justify-center py-8">
-                                <span className="text-slate-500 text-sm mb-1">Tahmini Maliyet</span>
-                                <span className="text-3xl font-bold text-navy-900">{formatCurrency(result.totalCostUSD, 'USD')}</span>
-                                <span className="text-xs text-slate-500 mt-2">~{formatCurrency(result.totalCostTL, 'TL')}</span>
-                            </CardContent>
-                        </Card>
-                        <Card className="bg-green-50 border-green-100">
-                            <CardContent className="flex flex-col items-center justify-center py-8">
-                                <span className="text-green-700 text-sm mb-1">Geri Dönüş (ROI)</span>
-                                <span className="text-3xl font-bold text-green-700">{result.roiYears} Yıl</span>
-                                <span className="text-xs text-green-600 mt-2">Amortisman Süresi</span>
+            <div id="report-content" className="bg-slate-50 p-1 md:p-4 rounded-xl transition-all">
+                <div className="pdf-header flex-col items-center justify-center mb-8 pb-6 border-b border-slate-200">
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className="bg-energy-500 p-2 rounded-full"><Sun className="h-8 w-8 text-white" /></div>
+                        <span className="text-3xl font-bold text-navy-900">SolarSmart</span>
+                    </div>
+                    <h2 className="text-xl font-medium text-slate-600">Güneş Enerjisi Fizibilite Raporu</h2>
+                    <p className="text-sm text-slate-400 mt-1">{new Date().toLocaleDateString('tr-TR')} - {result.city.name}</p>
+                </div>
+
+                <div className={`p-4 rounded-xl border mb-6 flex items-start gap-4 ${trafficColor} shadow-sm print-break-inside-avoid`}>
+                    <div className={`p-2 rounded-full ${isGood ? 'bg-green-200' : isAverage ? 'bg-yellow-200' : 'bg-red-200'}`}>
+                        {isGood ? <Award className="h-6 w-6" /> : <AlertTriangle className="h-6 w-6" />}
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-lg">{trafficTitle}</h3>
+                        <p className="text-sm opacity-90 mt-1">{trafficDesc}</p>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2 space-y-6">
+                        <Tabs className="w-full no-print no-pdf">
+                            <TabsList className="w-full grid grid-cols-3 bg-white border border-slate-200 p-1 h-auto">
+                                <TabsTrigger active={activeScenario === 'CONSERVATIVE'} onClick={() => setActiveScenario('CONSERVATIVE')} className="py-3 data-[active=true]:bg-navy-50 data-[active=true]:text-navy-900">
+                                    <div className="flex flex-col items-center"><span className="font-bold">Muhafazakâr</span><span className="text-xs opacity-60 mt-1">%70 Tüketim</span></div>
+                                </TabsTrigger>
+                                <TabsTrigger active={activeScenario === 'OPTIMAL'} onClick={() => setActiveScenario('OPTIMAL')} className="py-3 data-[active=true]:bg-energy-50 data-[active=true]:text-energy-700">
+                                    <div className="flex flex-col items-center"><span className="font-bold">⭐ Optimal</span><span className="text-xs opacity-60 mt-1">%100 Tüketim</span></div>
+                                </TabsTrigger>
+                                <TabsTrigger active={activeScenario === 'AGGRESSIVE'} onClick={() => setActiveScenario('AGGRESSIVE')} className="py-3 data-[active=true]:bg-green-50 data-[active=true]:text-green-700">
+                                    <div className="flex flex-col items-center"><span className="font-bold">Maksimum</span><span className="text-xs opacity-60 mt-1">%120 Satış</span></div>
+                                </TabsTrigger>
+                            </TabsList>
+                        </Tabs>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <Card className="bg-navy-900 text-white border-0"><CardContent className="p-4 text-center"><span className="text-slate-400 text-xs">Sistem Gücü</span><div className="text-2xl font-bold text-energy-500 mt-1">{currentData.systemSizeKW} kWp</div><span className="text-xs text-slate-500">{currentData.panelCount} Panel</span></CardContent></Card>
+                            <Card><CardContent className="p-4 text-center"><span className="text-slate-500 text-xs">Yatırım Maliyeti</span><div className="text-xl font-bold text-navy-900 mt-1">{formatCurrency(currentData.totalCostUSD, 'USD')}</div><span className="text-xs text-slate-400">~{formatCurrency(currentData.totalCostTL, 'TL')}</span></CardContent></Card>
+                            <Card><CardContent className="p-4 text-center"><span className="text-slate-500 text-xs">Amortisman</span><div className="text-2xl font-bold text-green-600 mt-1">{currentData.roiYears} Yıl</div><span className="text-xs text-slate-400">Geri Dönüş</span></CardContent></Card>
+                            <Card><CardContent className="p-4 text-center"><span className="text-slate-500 text-xs">25 Yıllık Kâr</span><div className="text-xl font-bold text-blue-600 mt-1">{formatCurrency(currentData.netProfit25Years, 'TL')}</div><span className="text-xs text-slate-400">Net Kazanç</span></CardContent></Card>
+                        </div>
+
+                        <div id="summary-charts" className="space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-96 print-break-inside-avoid"><ProductionChart result={currentData} /><FinancialComparisonChart result={currentData} /></div>
+                            <div className="h-80 print-break-inside-avoid"><ROIChart result={currentData} /></div>
+                        </div>
+
+                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm print-break-inside-avoid">
+                            <h4 className="font-semibold text-slate-800 mb-4 flex items-center gap-2"><Award className="h-5 w-5 text-energy-500" />Kazanılan Rozetler</h4>
+                            <div className="flex flex-wrap gap-4">
+                                <div className="flex items-center gap-3 bg-green-50 p-3 rounded-lg border border-green-100"><div className="bg-green-200 p-2 rounded-full"><Leaf className="h-5 w-5 text-green-700" /></div><div><p className="font-bold text-green-900 text-sm">Doğa Dostu</p><p className="text-xs text-green-700">{currentData.co2Saved} Ton CO₂ Engellendi</p></div></div>
+                                <div className="flex items-center gap-3 bg-blue-50 p-3 rounded-lg border border-blue-100"><div className="bg-blue-200 p-2 rounded-full"><DollarSign className="h-5 w-5 text-blue-700" /></div><div><p className="font-bold text-blue-900 text-sm">Enerji Bağımsızlığı</p><p className="text-xs text-blue-700">Elektriğin %{Math.min(100, currentData.selfConsumptionRate).toFixed(0)}'ini kendin üret</p></div></div>
+                            </div>
+                        </div>
+
+                        <div className="text-center no-print no-pdf"><button onClick={() => setShowTechDetails(true)} className="text-xs text-slate-400 hover:text-slate-600 underline">Hesaplama metodolojisi ve mühendislik detaylarını gör</button></div>
+                    </div>
+
+                    <div className="lg:col-span-1 no-print right-column">
+                        <Card className={`border-t-4 ${leadSubmitted ? 'border-green-500' : 'border-energy-500'} h-auto shadow-xl sticky top-6`}>
+                            <CardHeader className="bg-slate-50 border-b border-slate-100"><CardTitle className="text-lg">{leadSubmitted ? 'Talebiniz Alındı!' : 'Ücretsiz Keşif İste'}</CardTitle></CardHeader>
+                            <CardContent className="pt-6">
+                                {leadSubmitted ? (
+                                    <div className="text-center py-8">
+                                        <div className="bg-green-100 p-4 rounded-full inline-flex mb-4 animate-in zoom-in duration-300"><CheckCircle className="h-10 w-10 text-green-600" /></div>
+                                        <p className="text-slate-800 font-bold mb-2">Teşekkürler!</p>
+                                        <p className="text-sm text-slate-500 mb-2">Başvurunuz başarıyla ulaştı.</p>
+                                        <p className="text-xs text-slate-400 mb-6">Detaylı bilgilendirme e-postası adresinize gönderilmiştir.</p>
+                                        <Button variant="outline" className="w-full" onClick={onReset}>Yeni Hesaplama Yap</Button>
+                                    </div>
+                                ) : (
+                                    <><p className="text-sm text-slate-600 mb-6 leading-relaxed">Bu rapor bir simülasyondur. Evinize özel net fiyat teklifi ve gölge analizi için formu doldurun.</p><LeadForm inputData={inputData} resultData={currentData} onSuccess={() => setLeadSubmitted(true)} /><div className="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-400 text-center"><p>7.000+ mutlu müşteri SolarSmart altyapısını kullanıyor.</p></div></>
+                                )}
                             </CardContent>
                         </Card>
                     </div>
-
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Yıllık Üretim vs Tüketim (kWh)</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <ProductionChart result={result} />
-                            <div className="mt-6 grid grid-cols-2 gap-4 text-sm">
-                                <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
-                                    <p className="text-slate-500 mb-1">Aylık Tahmini Tasarruf</p>
-                                    <p className="text-xl font-bold text-navy-900">{formatCurrency(result.monthlySavings, 'TL')}</p>
-                                </div>
-                                <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
-                                    <p className="text-slate-500 mb-1">Doğaya Katkı (CO₂)</p>
-                                    <p className="text-xl font-bold text-green-600">{result.co2Saved} Ton/Yıl</p>
-                                </div>
-                            </div>
-                        </CardContent>
-                    </Card>
                 </div>
-
-                <div className="lg:col-span-1">
-                    <Card className={`border-t-4 ${leadSubmitted ? 'border-green-500' : 'border-energy-500'} h-full shadow-lg`}>
-                        <CardHeader>
-                            <CardTitle>{leadSubmitted ? 'Talebiniz Alındı!' : 'Ücretsiz Detaylı Rapor'}</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            {leadSubmitted ? (
-                                <div className="text-center py-12">
-                                    <div className="bg-green-100 p-4 rounded-full inline-flex mb-4">
-                                        <CheckCircle className="h-8 w-8 text-green-600" />
-                                    </div>
-                                    <p className="text-slate-600 mb-4 font-medium">Başvurunuz başarıyla ulaştı.</p>
-                                    <p className="text-sm text-slate-500 mb-6">Mühendislerimiz çatınızı uydudan inceleyip 24 saat içinde size özel teklif sunacaklar.</p>
-                                    <Button variant="outline" className="w-full" onClick={onReset}>Ana Sayfaya Dön</Button>
-                                </div>
-                            ) : (
-                                <>
-                                    <p className="text-sm text-slate-500 mb-6 leading-relaxed">
-                                        Bu hesaplama bir ön analizdir. Çatınızın net ölçüleri ve gölgelenme analizi için uzmanlarımızdan <strong>ücretsiz keşif</strong> isteyin.
-                                    </p>
-                                    <LeadForm 
-                                        inputData={inputData} 
-                                        resultData={result} 
-                                        onSuccess={() => setLeadSubmitted(true)} 
-                                    />
-                                </>
-                            )}
-                        </CardContent>
-                    </Card>
-                </div>
+                <div className="hidden pdf-header text-center mt-10 text-slate-400 text-xs"><p>Bu rapor SolarSmart Altyapısı ile oluşturulmuştur. www.solarsmart.com.tr</p></div>
             </div>
+
+            <Dialog isOpen={showTechDetails} onClose={() => setShowTechDetails(false)} title="Mühendislik Varsayımları">
+                <div className="space-y-4 text-sm text-slate-600">
+                    <p>SolarSmart hesaplama motoru, uluslararası IEC 61724 standartlarına uygun olarak aşağıdaki parametreleri kullanır:</p>
+                    <ul className="list-disc pl-5 space-y-2">
+                        <li><strong>Işınım Verisi:</strong> GEPA (Güneş Enerjisi Potansiyeli Atlası) ve NASA POWER veritabanlarından alınan 10 yıllık ortalama veriler.</li>
+                        <li><strong>Sistem Kayıpları:</strong> Kablo, inverter dönüşümü, sıcaklık ve kirlenme kayıpları senaryoya göre %12 ile %20 arasında modellenmiştir.</li>
+                        <li><strong>Panel Degradasyonu:</strong> İlk yıl %2, sonraki yıllar %0.5 verim kaybı (Linear Warranty Standard).</li>
+                        <li><strong>Finansal:</strong> Yıllık enerji enflasyonu %{DEFAULT_SETTINGS.energyInflationRate * 100}, bakım maliyetleri ve 10. yılda inverter değişimi hesaba katılmıştır.</li>
+                        <li><strong>Simülasyon:</strong> Hesaplamalar aylık bazda üretim/tüketim dengesi kurularak (Net Metering) yapılmaktadır.</li>
+                    </ul>
+                </div>
+            </Dialog>
         </div>
     );
 };
 
 const AdminLogin = ({ onLogin }: { onLogin: () => void }) => {
+    // ... (Login code unchanged)
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
 
@@ -328,17 +453,181 @@ const AdminLogin = ({ onLogin }: { onLogin: () => void }) => {
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleLogin} className="space-y-4">
-                        <Input 
-                            type="password" 
-                            placeholder="Şifre" 
-                            value={password}
-                            onChange={e => setPassword(e.target.value)}
-                            error={error}
-                        />
+                        <Input type="password" placeholder="Şifre" value={password} onChange={e => setPassword(e.target.value)} error={error} />
                         <Button type="submit" className="w-full">Giriş Yap</Button>
                     </form>
                 </CardContent>
             </Card>
+        </div>
+    );
+};
+
+// --- NEW: Design Studio Component for Admin ---
+const DesignStudio = ({ leads }: { leads: Lead[] }) => {
+    const [selectedLeadId, setSelectedLeadId] = useState<string>('');
+    const [selectedPanelId, setSelectedPanelId] = useState<string>('p1');
+    const [selectedInverterId, setSelectedInverterId] = useState<string>('inv1');
+    const [tiltAngle, setTiltAngle] = useState<number>(20);
+    const [isFlatRoof, setIsFlatRoof] = useState<boolean>(false);
+    
+    const [designResult, setDesignResult] = useState<DesignResult | null>(null);
+
+    const handleDesign = () => {
+        if (!selectedLeadId) return alert("Lütfen bir müşteri seçiniz.");
+        
+        const lead = leads.find(l => l.id === selectedLeadId);
+        if (!lead) return;
+
+        const city = CITIES.find(c => c.name === lead.city); // Simplified matching
+        const panel = MOCK_PANELS.find(p => p.id === selectedPanelId);
+        const inverter = MOCK_INVERTERS.find(i => i.id === selectedInverterId);
+
+        if (!city || !panel || !inverter) return alert("Veri hatası.");
+
+        const result = performEngineeringDesign(lead.id, city, lead.roofArea, panel, inverter, tiltAngle, isFlatRoof);
+        setDesignResult(result);
+    };
+
+    const panelOptions = MOCK_PANELS.map(p => ({ label: `${p.brand} - ${p.powerW}W`, value: p.id }));
+    const inverterOptions = MOCK_INVERTERS.map(i => ({ label: `${i.brand} - ${i.powerKW}kW`, value: i.id }));
+    const leadOptions = leads.map(l => ({ label: `${l.fullName} (${l.city})`, value: l.id }));
+
+    return (
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* Input Section */}
+            <Card className="border-t-4 border-t-purple-600 shadow-lg">
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <PenTool className="h-5 w-5 text-purple-600" />
+                        Proje Tasarım Stüdyosu
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <Select label="Müşteri (Lead)" options={leadOptions} value={selectedLeadId} onChange={e => setSelectedLeadId(e.target.value)} />
+                        <Select label="Panel Modeli" options={panelOptions} value={selectedPanelId} onChange={e => setSelectedPanelId(e.target.value)} />
+                        <Select label="İnverter Modeli" options={inverterOptions} value={selectedInverterId} onChange={e => setSelectedInverterId(e.target.value)} />
+                        
+                        <div className="space-y-4">
+                           <div className="flex gap-4">
+                                <Input label="Panel Açısı (°)" type="number" value={tiltAngle} onChange={e => setTiltAngle(Number(e.target.value))} />
+                                <div className="flex items-center pt-6">
+                                     <input type="checkbox" id="flatRoof" checked={isFlatRoof} onChange={e => setIsFlatRoof(e.target.checked)} className="mr-2 h-4 w-4" />
+                                     <label htmlFor="flatRoof" className="text-sm font-medium">Düz Çatı / Arazi</label>
+                                </div>
+                           </div>
+                        </div>
+                    </div>
+                    <div className="mt-6 flex justify-end">
+                        <Button onClick={handleDesign} className="bg-purple-600 hover:bg-purple-700 text-white">
+                            <Zap className="h-4 w-4 mr-2" />
+                            Mühendislik Analizini Çalıştır
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Results Section */}
+            {designResult && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* Module 1: String Sizing */}
+                    <Card className={`border-l-4 ${designResult.stringDesign.isCompatible ? 'border-l-green-500' : 'border-l-red-500'}`}>
+                        <CardHeader>
+                            <CardTitle className="text-lg flex items-center gap-2">
+                                <Grid className="h-5 w-5 text-slate-500" />
+                                Dizi (String) Tasarımı
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="flex justify-between items-center bg-slate-50 p-3 rounded">
+                                <span className="text-sm text-slate-500">Uyumluluk</span>
+                                <Badge variant={designResult.stringDesign.isCompatible ? 'success' : 'warning'}>
+                                    {designResult.stringDesign.isCompatible ? 'UYGUN' : 'UYGUNSUZ'}
+                                </Badge>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-2 text-sm">
+                                <div>
+                                    <p className="text-slate-400 text-xs">Min Panel/Dizi</p>
+                                    <p className="font-bold text-lg">{designResult.stringDesign.minPanels}</p>
+                                    <p className="text-[10px] text-slate-400">@70°C Vmpp</p>
+                                </div>
+                                <div>
+                                    <p className="text-slate-400 text-xs">Max Panel/Dizi</p>
+                                    <p className="font-bold text-lg">{designResult.stringDesign.maxPanels}</p>
+                                    <p className="text-[10px] text-slate-400">@-10°C Voc</p>
+                                </div>
+                            </div>
+                            
+                            {!designResult.stringDesign.isCompatible && (
+                                <div className="bg-red-50 text-red-600 text-xs p-2 rounded">
+                                    {designResult.stringDesign.reason}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* Module 2: Shadow & Spacing */}
+                    <Card className="border-l-4 border-l-blue-500">
+                        <CardHeader>
+                            <CardTitle className="text-lg flex items-center gap-2">
+                                <Ruler className="h-5 w-5 text-slate-500" />
+                                Gölge ve Mesafe
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                             <div className="space-y-1">
+                                <p className="text-xs text-slate-400">Güneş Yüksekliği (21 Ara)</p>
+                                <p className="font-bold">{designResult.shadowAnalysis.solarAltitudeAngle}°</p>
+                             </div>
+                             
+                             <div className="bg-blue-50 p-4 rounded-lg text-center">
+                                 <p className="text-xs text-blue-600 font-semibold uppercase mb-1">Gerekli Sıra Aralığı</p>
+                                 <p className="text-3xl font-bold text-navy-900">{designResult.shadowAnalysis.minRowSpacing} m</p>
+                                 <p className="text-[10px] text-blue-400 mt-1">Gölgesiz temiz mesafe</p>
+                             </div>
+
+                             <div className="text-xs text-slate-400">
+                                * Panel uzunluğu baz alınarak, en kötü senaryo (Kış Gündönümü) hesaplanmıştır.
+                             </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* Module 3: Capacity */}
+                    <Card className="border-l-4 border-l-energy-500">
+                        <CardHeader>
+                            <CardTitle className="text-lg flex items-center gap-2">
+                                <Maximize className="h-5 w-5 text-slate-500" />
+                                Kapasite Analizi
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                             <div className="grid grid-cols-2 gap-4">
+                                 <div>
+                                     <p className="text-xs text-slate-400">Sığan Panel</p>
+                                     <p className="text-2xl font-bold text-navy-900">{designResult.capacityAnalysis.maxPanelsFit} <span className="text-sm font-normal text-slate-400">Adet</span></p>
+                                 </div>
+                                 <div>
+                                     <p className="text-xs text-slate-400">DC Güç</p>
+                                     <p className="text-2xl font-bold text-energy-600">{designResult.capacityAnalysis.totalDCSizeKW} <span className="text-sm font-normal text-slate-400">kWp</span></p>
+                                 </div>
+                             </div>
+                             
+                             <div className="pt-4 border-t border-slate-100">
+                                 <p className="text-xs text-slate-500 mb-2">Tavsiye Edilen Konfigürasyon:</p>
+                                 <div className="flex gap-2">
+                                     <Badge variant="info">
+                                         {Math.floor(designResult.capacityAnalysis.maxPanelsFit / designResult.stringDesign.maxPanels)} String
+                                     </Badge>
+                                     <Badge variant="default">
+                                         x {designResult.stringDesign.maxPanels} Panel
+                                     </Badge>
+                                 </div>
+                             </div>
+                        </CardContent>
+                    </Card>
+                </div>
+            )}
         </div>
     );
 };
@@ -354,7 +643,7 @@ const AdminDashboard = ({
 }) => {
     const [leads, setLeads] = useState<Lead[]>([]);
     const [localSettings, setLocalSettings] = useState<GlobalSettings>(settings);
-    const [activeTab, setActiveTab] = useState<'leads' | 'settings'>('leads');
+    const [activeTab, setActiveTab] = useState<'leads' | 'design' | 'settings'>('leads');
     const [toastMessage, setToastMessage] = useState<string | null>(null);
 
     useEffect(() => {
@@ -392,6 +681,9 @@ const AdminDashboard = ({
                 <TabsList className="mb-6 w-full justify-start border-b rounded-none p-0 h-auto bg-transparent border-slate-200">
                     <TabsTrigger active={activeTab === 'leads'} onClick={() => setActiveTab('leads')}>
                         <Users className="h-4 w-4 mr-2" /> Müşteri Adayları
+                    </TabsTrigger>
+                    <TabsTrigger active={activeTab === 'design'} onClick={() => setActiveTab('design')}>
+                        <PenTool className="h-4 w-4 mr-2" /> Design Studio
                     </TabsTrigger>
                     <TabsTrigger active={activeTab === 'settings'} onClick={() => setActiveTab('settings')}>
                         <SettingsIcon className="h-4 w-4 mr-2" /> Sistem Ayarları
@@ -449,6 +741,10 @@ const AdminDashboard = ({
                             </div>
                         </CardContent>
                     </Card>
+                </TabsContent>
+
+                <TabsContent active={activeTab === 'design'}>
+                    <DesignStudio leads={leads} />
                 </TabsContent>
 
                 <TabsContent active={activeTab === 'settings'}>
@@ -536,7 +832,7 @@ const App = () => {
   });
 
   // Result State
-  const [result, setResult] = useState<CalculationResult | null>(null);
+  const [result, setResult] = useState<SimulationResult | null>(null);
   const [leadSubmitted, setLeadSubmitted] = useState(false);
   
   // Admin & Settings State
@@ -581,7 +877,7 @@ const App = () => {
   };
 
   const renderHeader = () => (
-    <header className="bg-navy-900 text-white py-4 shadow-lg sticky top-0 z-50">
+    <header className="bg-navy-900 text-white py-4 shadow-lg sticky top-0 z-50 print:hidden">
       <div className="container mx-auto px-4 flex justify-between items-center">
         <div 
             className="flex items-center gap-2 cursor-pointer"
