@@ -23,7 +23,7 @@ export const CardContent = ({ children, className }: { children?: React.ReactNod
 );
 
 // --- Button ---
-export interface ButtonProps extends React.ComponentProps<'button'> {
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'outline' | 'ghost' | 'danger' | 'success';
   size?: 'sm' | 'md' | 'lg';
 }
@@ -51,7 +51,7 @@ export const Button = ({ className, variant = 'primary', size = 'md', ...props }
 };
 
 // --- Input ---
-export interface InputProps extends React.ComponentProps<'input'> {
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
 }
@@ -72,7 +72,7 @@ export const Input = ({ label, error, className, ...props }: InputProps) => (
 );
 
 // --- Select ---
-export interface SelectProps extends React.ComponentProps<'select'> {
+export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   label?: string;
   options: { label: string; value: string | number }[];
 }

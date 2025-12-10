@@ -1,15 +1,31 @@
 
-import { Region, CityData, RoofDirection, GlobalSettings, SolarPanel, Inverter } from './types';
+import { Region, CityData, RoofDirection, GlobalSettings, SolarPanel, Inverter, BuildingType, ConsumptionProfile } from './types';
 
 // Default system settings
 export const DEFAULT_SETTINGS: GlobalSettings = {
   usdRate: 34.50, 
-  electricityPrice: 3.5, 
+  electricityPrice: 2.40, // Base Price (Mesken) 
   panelWattage: 550, // Updated to modern panel standard
   systemCostPerKw: 800, // USD/kW installed (Tier 1 equipment)
   energyInflationRate: 0.05, // 5% yearly real increase
   panelDegradationRate: 0.005, // 0.5% yearly
   maintenanceCostPercent: 0.05, // 5% of CAPEX for inverter change at year 10
+};
+
+// --- NEW: Dynamic Tariff Rates (TL/kWh) ---
+export const TARIFF_RATES: Record<BuildingType, number> = {
+  [BuildingType.MESKEN]: 2.40,
+  [BuildingType.TICARETHANE]: 4.50,
+  [BuildingType.SANAYI]: 4.00
+};
+
+// --- NEW: Self Consumption Rates (SCR) ---
+// How much of produced solar energy is used instantly vs sold to grid
+// Higher SCR = Better ROI because Buying Price > Selling Price
+export const PROFILE_SCR: Record<ConsumptionProfile, number> = {
+  [ConsumptionProfile.GUNDUZ]: 0.90,  // Excellent match
+  [ConsumptionProfile.DENGELI]: 0.65, // Standard match
+  [ConsumptionProfile.AKSAM]: 0.40    // Poor match (mostly selling)
 };
 
 // Efficiency loss factor based on direction

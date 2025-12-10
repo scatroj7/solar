@@ -1,8 +1,11 @@
+
 import { 
   CITY_SOLAR_DATA, 
   DIRECTION_EFFICIENCY, 
   GRID_PRICING,
-  CITIES
+  CITIES,
+  TARIFF_RATES,
+  PROFILE_SCR
 } from '../constants';
 import { CalculationInput, GlobalSettings, MonthlyData, YearlyData, SimulationResult, ScenarioType, ScenarioResult } from '../types';
 
@@ -18,36 +21,81 @@ const SCENARIOS: ScenarioConfig[] = [
   { type: 'AGGRESSIVE', offsetTarget: 1.2, systemLossFactor: 0.12 },
 ];
 
+// Helper to find closest city solar data if exact API not available
+const findClosestCityData = (lat: number, lng: number) => {
+    let closestCityId = 6; // Default Ankara
+    let minDist = Infinity;
+
+    CITIES.forEach(city => {
+        const d = Math.sqrt(
+            Math.pow(city.coordinates.lat - lat, 2) + 
+            Math.pow(city.coordinates.lon - lng, 2)
+        );
+        if (d < minDist) {
+            minDist = d;
+            closestCityId = city.id;
+        }
+    });
+    
+    return {
+        data: CITY_SOLAR_DATA[closestCityId],
+        cityInfo: CITIES.find(c => c.id === closestCityId)!
+    };
+}
+
 export const calculateSolarSystem = (
   input: CalculationInput, 
   settings: GlobalSettings
 ): SimulationResult => {
   
-  const city = CITIES.find(c => c.id === input.cityId);
-  if (!city) throw new Error('Şehir bulunamadı');
+  // 1. Get Solar Data (Dynamic Location)
+  let solarData;
+  let cityInfo;
+
+  if (input.coordinates) {
+      const nearest = findClosestCityData(input.coordinates.lat, input.coordinates.lng);
+      solarData = nearest.data;
+      cityInfo = nearest.cityInfo;
+      // Note: In a real app, we would fetch specific irradiation data from Open-Meteo here.
+  } else {
+      // Fallback legacy
+      const city = CITIES.find(c => c.id === input.cityId);
+      if (!city) throw new Error('Şehir bulunamadı');
+      cityInfo = city;
+      solarData = CITY_SOLAR_DATA[input.cityId];
+  }
   
-  const solarData = CITY_SOLAR_DATA[input.cityId];
   if (!solarData) throw new Error('Güneş verisi bulunamadı');
   
   const directionEff = DIRECTION_EFFICIENCY[input.roofDirection] || 1.0;
-  const annualConsumption = (input.billAmount / settings.electricityPrice) * 12;
+  
+  // 2. Determine Electricity Price based on Building Type
+  const electricityPrice = TARIFF_RATES[input.buildingType] || settings.electricityPrice;
+
+  const annualConsumption = (input.billAmount / electricityPrice) * 12;
   const maxPowerFromRoof = input.roofArea / 6; // 1kWp ~ 6m2
 
   const scenarios: Record<string, ScenarioResult> = {};
 
   SCENARIOS.forEach(config => {
-    // 1. Calculate Required Power based on Offset Target
-    // Formula: Required = Consumption * Offset / (SpecificYield * (1 - Loss))
+    // 3. Calculate Required Power based on Offset Target
     const systemEfficiency = 1 - config.systemLossFactor;
     const specificYield = solarData.avgInsolation * 365 * directionEff;
     
     let targetKW = (annualConsumption * config.offsetTarget) / (specificYield * systemEfficiency);
     
-    // 2. Limit by Roof Area
+    // 4. Limit by Roof Area
     const actualSystemKW = Math.min(targetKW, maxPowerFromRoof);
     const panelCount = Math.ceil((actualSystemKW * 1000) / settings.panelWattage);
     
-    // 3. Monthly Simulation
+    // 5. Get SCR (Self Consumption Rate) from Profile
+    // We adjust it slightly based on the scenario type (Conservative scenario implies less optimization)
+    let baseSCR = PROFILE_SCR[input.consumptionProfile] || 0.65;
+    if (config.type === 'CONSERVATIVE') baseSCR -= 0.05;
+    if (config.type === 'AGGRESSIVE') baseSCR += 0.05;
+    baseSCR = Math.min(0.95, Math.max(0.20, baseSCR)); // Clamp
+
+    // 6. Monthly Simulation
     const monthlyProduction: MonthlyData[] = solarData.monthlyFactors.map((factor, index) => {
       const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][index];
       const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
@@ -56,39 +104,40 @@ export const calculateSolarSystem = (
       const production = actualSystemKW * monthlyInsolation * daysInMonth * systemEfficiency * directionEff;
       const consumption = annualConsumption / 12; // Simplified flat profile
       
-      const surplus = Math.max(0, production - consumption);
-      const deficit = Math.max(0, consumption - production);
+      // Dynamic SCR Logic per month (Summer higher production might lower SCR if consumption is flat)
+      // For simplicity, we use the Base SCR to split production.
+      const selfConsumed = Math.min(production, consumption) * baseSCR; 
+      const surplus = Math.max(0, production - selfConsumed);
       
-      const savings = (Math.min(production, consumption) * settings.electricityPrice) + 
-                     (surplus * settings.electricityPrice * GRID_PRICING.sellPriceMultiplier) - 
-                     (deficit * settings.electricityPrice * GRID_PRICING.buyPriceMultiplier); // Note: Deficit is a cost, but we track "Savings" against the baseline bill.
-      
-      // True Savings = Bill Without Solar - Bill With Solar
-      // Bill Without Solar = consumption * price
-      // Bill With Solar = deficit * price - surplus * sell_price
-      // Savings = (consumption * price) - (deficit * price - surplus * sell_price)
-      // This simplifies to: self_consumed * price + surplus * sell_price.
+      // Note: "Deficit" is grid import. "SelfConsumed" is savings. "Surplus" is sold.
+      // Net Bill = (Consumption - SelfConsumed) * BuyPrice - (Surplus * SellPrice)
+      // Savings = OldBill - NetBill
+      // OldBill = Consumption * BuyPrice
+      // Savings = (SelfConsumed * BuyPrice) + (Surplus * SellPrice)
+
+      const savings = (selfConsumed * electricityPrice) + 
+                     (surplus * electricityPrice * GRID_PRICING.sellPriceMultiplier);
       
       return {
         month: monthNames[index],
         production: Math.round(production),
         consumption: Math.round(consumption),
         surplus: Math.round(surplus),
-        deficit: Math.round(deficit),
+        deficit: Math.round(Math.max(0, consumption - selfConsumed)),
         savings: Math.round(savings)
       };
     });
 
-    // 4. Annual Totals
+    // 7. Annual Totals
     const annualProduction = monthlyProduction.reduce((sum, m) => sum + m.production, 0);
     const annualSavings = monthlyProduction.reduce((sum, m) => sum + m.savings, 0);
     const totalSurplus = monthlyProduction.reduce((sum, m) => sum + m.surplus, 0);
     
-    // 5. Costs
+    // 8. Costs
     const totalCostUSD = actualSystemKW * settings.systemCostPerKw;
     const totalCostTL = totalCostUSD * settings.usdRate;
     
-    // 6. 25-Year Projection
+    // 9. 25-Year Projection
     const yearlyAnalysis: YearlyData[] = [];
     let cumulativeSavings = 0;
     let cumulativeCost = totalCostTL;
@@ -99,10 +148,10 @@ export const calculateSolarSystem = (
       const infFactor = Math.pow(1 + settings.energyInflationRate, year - 1);
       
       const yProd = annualProduction * degFactor;
-      const yCons = annualConsumption; // Assuming constant consumption volume
+      const yCons = annualConsumption; 
       const ySavings = annualSavings * degFactor * infFactor;
       
-      const yBillWithoutSolar = annualConsumption * settings.electricityPrice * infFactor;
+      const yBillWithoutSolar = annualConsumption * electricityPrice * infFactor;
       cumulativeBillWithoutSolar += yBillWithoutSolar;
 
       // Inverter Replacement at Year 10
@@ -126,7 +175,7 @@ export const calculateSolarSystem = (
     }
 
     const roiYear = yearlyAnalysis.find(y => y.netProfit > 0)?.year || 25;
-    const selfConsumptionRate = ((Math.min(annualProduction, annualConsumption) / annualProduction) * 100);
+    const calculatedSCR = ((annualProduction - totalSurplus) / annualProduction) * 100;
     const co2 = (annualProduction * 0.65) / 1000;
 
     scenarios[config.type] = {
@@ -139,11 +188,11 @@ export const calculateSolarSystem = (
       netProfit25Years: Math.round(yearlyAnalysis[24].netProfit),
       monthlySavings: Math.round(annualSavings / 12),
       co2Saved: parseFloat(co2.toFixed(2)),
-      selfConsumptionRate: parseFloat(selfConsumptionRate.toFixed(1)),
+      selfConsumptionRate: parseFloat(calculatedSCR.toFixed(1)),
       monthlyProduction,
       yearlyAnalysis,
       averageROI: yearlyAnalysis[24].roi,
-      gridSaleRevenue: Math.round(totalSurplus * settings.electricityPrice * GRID_PRICING.sellPriceMultiplier),
+      gridSaleRevenue: Math.round(totalSurplus * electricityPrice * GRID_PRICING.sellPriceMultiplier),
       initialInvestment: Math.round(totalCostTL)
     };
   });
@@ -151,7 +200,7 @@ export const calculateSolarSystem = (
   return {
     scenarios: scenarios as unknown as Record<ScenarioType, ScenarioResult>,
     recommendedScenario: 'OPTIMAL',
-    city,
+    city: cityInfo,
     input
   };
 };

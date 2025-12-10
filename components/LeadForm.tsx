@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Button, Input, Dialog } from './ui/UIComponents';
 import { LeadService } from '../services/mockService';
@@ -81,7 +82,8 @@ export const LeadForm: React.FC<LeadFormProps> = ({ inputData, resultData, onSuc
     e.preventDefault();
     setLoading(true);
     
-    const cityName = CITIES.find(c => c.id === Number(inputData.cityId))?.name || 'Unknown';
+    // FIX: Prioritize the detected location name from Google Maps. Fallback to CITIES lookup or 'Bilinmiyor'.
+    const cityName = inputData.locationName || CITIES.find(c => c.id === Number(inputData.cityId))?.name || 'Bilinmiyor';
 
     // 1. Capture the Charts from the DOM
     let chartBase64 = '';
@@ -110,7 +112,7 @@ export const LeadForm: React.FC<LeadFormProps> = ({ inputData, resultData, onSuc
         fullName: formData.fullName,
         phone: formData.phone,
         email: formData.email,
-        city: cityName,
+        city: cityName, // Use the correct city/district name
         billAmount: inputData.billAmount,
         roofArea: inputData.roofArea,
         systemSize: resultData.systemSizeKW,

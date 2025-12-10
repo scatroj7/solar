@@ -18,6 +18,18 @@ export enum Region {
   KARADENIZ = 'Karadeniz'
 }
 
+export enum BuildingType {
+  MESKEN = 'Mesken',
+  TICARETHANE = 'Ticarethane',
+  SANAYI = 'Sanayi'
+}
+
+export enum ConsumptionProfile {
+  GUNDUZ = 'Gündüz Ağırlıklı', // 08:00 - 18:00
+  AKSAM = 'Akşam Ağırlıklı',   // 18:00 sonrası
+  DENGELI = '7/24 Dengeli'     // Fabrika / Home Office
+}
+
 export interface CityData {
   id: number;
   name: string;
@@ -27,10 +39,14 @@ export interface CityData {
 }
 
 export interface CalculationInput {
-  cityId: number;
+  cityId: number; // Legacy, kept for fallback
+  coordinates?: { lat: number; lng: number }; // New exact location
+  locationName?: string; // New: Stores "District, City" from Google Maps
   roofArea: number;
   roofDirection: RoofDirection;
   billAmount: number; // TL
+  buildingType: BuildingType;
+  consumptionProfile: ConsumptionProfile;
 }
 
 export interface MonthlyData {
@@ -158,11 +174,15 @@ export interface DesignResult {
     shadowLength: number;
   };
 
-  // Module 3: Capacity
-  capacityAnalysis: {
-    maxPanelsFit: number;
+  // Module 3: Capacity & Layout (Updated for 2D Grid)
+  layoutAnalysis: {
+    totalPanelCount: number;
+    rows: number;
+    columns: number;
+    usedArea: number;
+    packingEfficiency: number; // % of roof used
     totalDCSizeKW: number;
-    actualDCSizeKW: number; // Based on string configuration selection (not fully implemented in UI but logic exists)
-    rowsPossible: number;
+    roofDim: { width: number; length: number };
+    visualGrid: { x: number; y: number; w: number; h: number }[]; // Coordinates for rendering
   };
 }

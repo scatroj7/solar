@@ -11,7 +11,6 @@ export const calculateStringSizing = (
 ): { minPanels: number; maxPanels: number; vocMax: number; vmppMin: number; isCompatible: boolean; reason?: string } => {
 
     // 1. Calculate Max Voltage at Coldest Temp (-10°C)
-    // Formula: V_panel_max = Panel.voc * (1 + ((-10 - 25) * (Panel.tempCoeffVoc / 100)))
     const tempDiffCold = -10 - 25; // -35 degrees diff
     const voltageRiseFactor = 1 + (tempDiffCold * (panel.tempCoeffVoc / 100));
     const vPanelMax = panel.voc * voltageRiseFactor;
@@ -20,8 +19,6 @@ export const calculateStringSizing = (
     const maxPanels = Math.floor(inverter.maxInputVoltage / vPanelMax);
 
     // 2. Calculate Min Voltage at Hottest Temp (70°C) for MPPT Activation
-    // Formula: V_panel_min = Panel.vmpp * (1 + ((70 - 25) * (Panel.tempCoeffVoc / 100)))
-    // NOTE: The prompt specified using tempCoeffVoc for Vmpp calculation logic, so we strictly follow that.
     const tempDiffHot = 70 - 25; // 45 degrees diff
     const voltageDropFactor = 1 + (tempDiffHot * (panel.tempCoeffVoc / 100));
     const vPanelMin = panel.vmpp * voltageDropFactor;
@@ -38,10 +35,7 @@ export const calculateStringSizing = (
     }
 
     if (panel.impp > inverter.maxInputCurrent) {
-         // This is a soft check, some designers accept clipping, but here we flag it.
          reason = reason ? reason + " Ayrıca panel akımı inverter giriş akımından yüksek (clipping oluşabilir)." : "Panel akımı inverter giriş sınırını aşıyor.";
-         // We don't necessarily set isCompatible to false for current clipping in all designs, but let's be strict for safety.
-         // isCompatible = false; 
     }
 
     return {
@@ -64,8 +58,6 @@ export const calculateShadowSpacing = (
 ): { minSpacing: number; alphaAngle: number; shadowLength: number } => {
     
     // Formula: Alpha (Sun Altitude) = 90 - Latitude - 23.45
-    // 23.45 is the declination of the sun on Dec 21st (Southern Hemisphere max). 
-    // Since Turkey is Northern Hemisphere, sun is lowest.
     const alphaDegrees = 90 - latitude - 23.45;
     const alphaRadians = alphaDegrees * (Math.PI / 180);
     const tiltRadians = tiltAngle * (Math.PI / 180);
@@ -87,7 +79,8 @@ export const calculateShadowSpacing = (
 export const performEngineeringDesign = (
     leadId: string,
     city: CityData,
-    roofArea: number,
+    roofWidth: number,
+    roofLength: number,
     panel: SolarPanel,
     inverter: Inverter,
     tiltAngle: number = 20, // Default typical tilt
@@ -97,30 +90,62 @@ export const performEngineeringDesign = (
     // 1. String Sizing
     const stringResult = calculateStringSizing(panel, inverter);
 
-    // 2. Shadow Analysis (Only crucial for Flat Roof / Ground)
-    // For pitched roof, spacing is usually 2cm clamp distance, but we calculate shadow anyway for info.
+    // 2. Shadow Analysis
     // Assume Portrait mounting -> panelLength = panel.dimensions.height
     const panelLength = panel.dimensions.height; 
     const shadowResult = calculateShadowSpacing(city.coordinates.lat, tiltAngle, panelLength);
 
-    // 3. Capacity Analysis
-    // Effective area per panel depends on installation type
-    let effectiveAreaPerPanel = 0;
+    // 3. Layout & Capacity Analysis
     
+    // Gaps (clamps and expansion joints)
+    const LATERAL_GAP = 0.02; // 2cm side gap
+    const LONGITUDINAL_GAP = 0.05; // 5cm vertical gap
+
+    // Effective dimensions per unit (footprint)
+    const capEn = panel.dimensions.width + LATERAL_GAP;
+    
+    // For flat roof, the effective 'length' includes the shadow spacing
+    let capBoy = 0;
+    let rowPitch = 0;
+
     if (isFlatRoof) {
-        // Area = (Panel Projection + Shadow Spacing) * Width
-        // Projection = Cos(tilt) * Length
+        // Projection on ground = cos(tilt) * length
         const projection = Math.cos(tiltAngle * (Math.PI / 180)) * panelLength;
-        const rowPitch = projection + shadowResult.minSpacing;
-        effectiveAreaPerPanel = rowPitch * panel.dimensions.width;
+        // Pitch = Projection + Shadow Free Distance
+        rowPitch = projection + shadowResult.minSpacing;
+        capBoy = rowPitch;
     } else {
-        // Pitched Roof (Flush Mount)
-        // Area = Panel Area + slight gap (approx 10%)
-        effectiveAreaPerPanel = (panel.dimensions.width * panel.dimensions.height) * 1.05; 
+        // Flush mount on pitched roof
+        capBoy = panel.dimensions.height + LONGITUDINAL_GAP;
+        rowPitch = capBoy;
     }
 
-    const maxPanelsFit = Math.floor(roofArea / effectiveAreaPerPanel);
-    const totalDCSizeKW = (maxPanelsFit * panel.powerW) / 1000;
+    // Number of panels
+    const nEn = Math.floor(roofWidth / capEn);
+    const nBoy = Math.floor(roofLength / capBoy);
+    const totalPanelCount = nEn * nBoy;
+
+    // Generate Visual Grid Data
+    // Coordinates are relative to Top-Left (0,0) of the roof
+    const visualGrid: { x: number; y: number; w: number; h: number }[] = [];
+    
+    for (let r = 0; r < nBoy; r++) {
+        for (let c = 0; c < nEn; c++) {
+            visualGrid.push({
+                x: c * capEn,
+                y: r * capBoy,
+                // We draw the actual panel size, the gaps are just spacing
+                w: panel.dimensions.width,
+                h: isFlatRoof ? (Math.cos(tiltAngle * (Math.PI / 180)) * panelLength) : panel.dimensions.height // Draw projection for flat roof top-down view
+            });
+        }
+    }
+
+    const usedArea = totalPanelCount * (panel.dimensions.width * panel.dimensions.height);
+    const roofArea = roofWidth * roofLength;
+    const packingEfficiency = (usedArea / roofArea) * 100;
+
+    const totalDCSizeKW = (totalPanelCount * panel.powerW) / 1000;
 
     return {
         leadId,
@@ -136,15 +161,19 @@ export const performEngineeringDesign = (
             reason: stringResult.reason
         },
         shadowAnalysis: {
-            minRowSpacing: isFlatRoof ? shadowResult.minSpacing : 0.02, // 2cm for flush
+            minRowSpacing: isFlatRoof ? shadowResult.minSpacing : 0.02, 
             solarAltitudeAngle: shadowResult.alphaAngle,
             shadowLength: shadowResult.shadowLength
         },
-        capacityAnalysis: {
-            maxPanelsFit,
+        layoutAnalysis: {
+            totalPanelCount,
+            rows: nBoy,
+            columns: nEn,
+            usedArea: parseFloat(usedArea.toFixed(2)),
+            packingEfficiency: parseFloat(packingEfficiency.toFixed(1)),
             totalDCSizeKW: parseFloat(totalDCSizeKW.toFixed(2)),
-            actualDCSizeKW: parseFloat(totalDCSizeKW.toFixed(2)), // Placeholder
-            rowsPossible: 0 // Would require dimension parsing of roof (Width vs Length)
+            roofDim: { width: roofWidth, length: roofLength },
+            visualGrid
         }
     };
 };
