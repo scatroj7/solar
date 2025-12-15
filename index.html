@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="tr">
   <head>
@@ -39,7 +40,11 @@
 
       /* PDF Generation Helpers */
       .pdf-header { display: none; }
-      .pdf-mode .pdf-header { display: flex; }
+      .pdf-spacer { display: none; }
+
+      .pdf-mode .pdf-header { display: block; }
+      /* This spacer pushes content down in PDF mode to avoid top cropping */
+      .pdf-mode .pdf-spacer { display: block; height: 50px; width: 100%; }
       .pdf-mode .no-pdf { display: none !important; }
       
       /* Force desktop layout during PDF capture to prevent mobile stacking */
@@ -47,7 +52,7 @@
         width: 1200px !important;
         margin: 0 auto;
         background-color: white;
-        padding: 40px !important;
+        padding: 40px 40px !important; 
       }
       .pdf-mode .grid-cols-1 {
         grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
@@ -71,7 +76,9 @@
     "mongoose": "https://aistudiocdn.com/mongoose@^9.0.1",
     "jspdf": "https://aistudiocdn.com/jspdf@^2.5.1/dist/jspdf.es.min.js",
     "html2canvas": "https://aistudiocdn.com/html2canvas@^1.4.1",
-    "@react-google-maps/api": "https://aistudiocdn.com/@react-google-maps/api@^2.19.2"
+    "@react-google-maps/api": "https://aistudiocdn.com/@react-google-maps/api@^2.19.2",
+    "@supabase/supabase-js": "https://aistudiocdn.com/@supabase/supabase-js@^2.87.1",
+    "@emailjs/browser": "https://aistudiocdn.com/@emailjs/browser@^4.4.1"
   }
 }
 </script>

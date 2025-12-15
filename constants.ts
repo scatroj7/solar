@@ -13,6 +13,8 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
 };
 
 // --- NEW: Dynamic Tariff Rates (TL/kWh) ---
+// TODO: Extend this for Time-of-Use (ToU) metering (Day/Peak/Night rates)
+// Current values are blended averages.
 export const TARIFF_RATES: Record<BuildingType, number> = {
   [BuildingType.MESKEN]: 2.40,
   [BuildingType.TICARETHANE]: 4.50,

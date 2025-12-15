@@ -1,8 +1,7 @@
-
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleMap, LoadScript, Autocomplete, DrawingManager } from '@react-google-maps/api';
 import { Button, Card, CardContent, Input } from './ui/UIComponents';
-import { Search, MapPin, Check, RefreshCw, AlertTriangle, Edit3, Globe, AlertCircle, Copy, Navigation } from 'lucide-react';
+import { Search, MapPin, Check, RefreshCw, AlertTriangle, Edit3, Globe, AlertCircle, Copy, Navigation, Key } from 'lucide-react';
 
 declare var google: any;
 declare global {
@@ -22,8 +21,13 @@ const libraries: ("places" | "drawing" | "geometry")[] = ["places", "drawing", "
 const DEFAULT_CENTER_COORDS = { lat: 39.93, lng: 32.85 };
 
 export const RoofMapper: React.FC<RoofMapperProps> = ({ apiKey, onComplete }) => {
-  // Check if we have a real key or a placeholder
-  const hasValidKey = apiKey && apiKey !== "YOUR_GOOGLE_MAPS_API_KEY";
+  // Local state for DEV Override key
+  const [devKey, setDevKey] = useState("");
+  const [devKeyInput, setDevKeyInput] = useState("");
+  
+  // Calculate effective key: Prop takes precedence if it exists, otherwise use devKey
+  const effectiveKey = apiKey && apiKey.trim() !== "" ? apiKey : devKey;
+  const hasValidKey = !!effectiveKey && effectiveKey.trim() !== "";
   
   const [map, setMap] = useState<any | null>(null);
   const [autocomplete, setAutocomplete] = useState<any | null>(null);
@@ -38,23 +42,39 @@ export const RoofMapper: React.FC<RoofMapperProps> = ({ apiKey, onComplete }) =>
   const polygonRef = useRef<any | null>(null);
   
   // Manual Mode State
-  const [manualMode, setManualMode] = useState(!hasValidKey);
+  // Default is FALSE (Always try to load map first)
+  const [manualMode, setManualMode] = useState(false);
   const [manualAreaInput, setManualAreaInput] = useState<string>('');
   const [apiError, setApiError] = useState<string | null>(null);
   const [currentUrl, setCurrentUrl] = useState('');
 
-  // FIX 2: Update manual mode logic. 
+  // Sadece URL bilgisini almak için useEffect
   useEffect(() => {
-      if (hasValidKey && !apiError) {
-          setManualMode(false);
-      } else if (!hasValidKey) {
-          setManualMode(true);
-      }
-      
       if (typeof window !== 'undefined') {
           setCurrentUrl(window.location.href);
       }
-  }, [hasValidKey, apiError]);
+  }, []);
+
+  // DEBUG & ERROR HANDLING LOGIC
+  useEffect(() => {
+      // Konsola anahtarın durumunu yazdırıyoruz (Güvenlik için tamamını yazdırmıyoruz)
+      const keyStatus = hasValidKey ? `Mevcut (İlk 5: ${effectiveKey.substring(0,5)}...)` : "YOK / BOŞ";
+      console.log(`[RoofMapper] API Anahtar Durumu: ${keyStatus}`);
+
+      if (!hasValidKey) {
+          // Geliştirici ortamını kontrol et
+          const isDev = typeof window !== 'undefined' && (
+              window.location.hostname === 'localhost' || 
+              window.location.hostname === '127.0.0.1' ||
+              window.location.hostname.includes('verce') ||
+              window.location.hostname.includes('google')
+          );
+
+          let msg = "Harita servisi şu anda kullanılamıyor. Lütfen manuel giriş yapınız.";
+          setApiError(msg);
+          setManualMode(true);
+      }
+  }, [hasValidKey, effectiveKey]);
 
   // Robustly handle Google Maps Auth Failure
   const handleAuthFailure = useCallback(() => {
@@ -65,11 +85,15 @@ export const RoofMapper: React.FC<RoofMapperProps> = ({ apiKey, onComplete }) =>
       let msg = "Harita servisi yüklenemedi.";
       if (isPreview || isLocalhost) {
           msg = "API Anahtarı kısıtlaması hatası (RefererNotAllowed).";
+      } else if (!hasValidKey) {
+          msg = "API Anahtarı eksik veya geçersiz.";
+      } else {
+          msg = "API Anahtarı doğrulanamadı. (Lütfen Console'u kontrol edin).";
       }
       
       setApiError(msg);
       setManualMode(true);
-  }, []);
+  }, [hasValidKey]);
 
   useEffect(() => {
     window.gm_authFailure = handleAuthFailure;
@@ -77,7 +101,6 @@ export const RoofMapper: React.FC<RoofMapperProps> = ({ apiKey, onComplete }) =>
       window.gm_authFailure = undefined;
     };
   }, [handleAuthFailure]);
-
   
   const onLoad = useCallback((mapInstance: any) => {
     setMap(mapInstance);
@@ -189,6 +212,14 @@ export const RoofMapper: React.FC<RoofMapperProps> = ({ apiKey, onComplete }) =>
       setManualMode(true);
   };
   
+  const handleApplyDevKey = () => {
+      if(devKeyInput.trim().length > 10) {
+          setDevKey(devKeyInput.trim());
+          setApiError(null);
+          setManualMode(false); // Force try reload
+      }
+  };
+
   const copyToClipboard = () => {
       try {
         const origin = new URL(currentUrl).origin + "/*";
@@ -227,6 +258,27 @@ export const RoofMapper: React.FC<RoofMapperProps> = ({ apiKey, onComplete }) =>
                                 </div>
                             </div>
                         )}
+                        {/* Geliştirici için anahtar girme alanı - Sadece Env'den anahtar gelmiyorsa göster */}
+                        {!apiKey && (
+                            <div className="mt-3 pt-3 border-t border-red-200">
+                                <label className="text-xs font-bold text-slate-500 block mb-2 flex items-center gap-1">
+                                    <Key className="h-3 w-3" /> Geliştirici Test Girişi
+                                </label>
+                                <div className="flex gap-2">
+                                    <input 
+                                        type="text" 
+                                        className="flex-1 text-xs border border-slate-300 rounded px-2 py-1" 
+                                        placeholder="API Key yapıştırın..." 
+                                        value={devKeyInput}
+                                        onChange={(e) => setDevKeyInput(e.target.value)}
+                                    />
+                                    <button onClick={handleApplyDevKey} className="bg-slate-800 text-white text-xs px-3 py-1 rounded hover:bg-slate-900">
+                                        Uygula
+                                    </button>
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-1 italic">Bu anahtar sadece bu oturum için geçerlidir. Canlı ortamda görünmez.</p>
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <p className="text-sm text-slate-500 mb-6">Harita servisi şu anda kullanılamıyor veya API anahtarı eksik. Lütfen çatı alanınızı manuel olarak giriniz.</p>
@@ -262,6 +314,14 @@ export const RoofMapper: React.FC<RoofMapperProps> = ({ apiKey, onComplete }) =>
   }
 
   // --- Map Mode View ---
+  // IMPORTANT: Only render LoadScript if we have a key. Otherwise we get console errors.
+  // We double check here, although useEffect above should trigger manualMode.
+  if (!hasValidKey) {
+      // Return null here creates a flash, but manualMode state update will fix it on next render.
+      // But we prefer to let it fall through to manualMode view via state update.
+      return null; 
+  }
+
   return (
     <div className="w-full h-[600px] relative rounded-xl overflow-hidden shadow-2xl border border-slate-200 group">
       {/* CSS FIX FOR GOOGLE MAPS AUTOCOMPLETE DROPDOWN */}
@@ -292,8 +352,10 @@ export const RoofMapper: React.FC<RoofMapperProps> = ({ apiKey, onComplete }) =>
         }
       `}</style>
 
+      {/* KEY PROP IS CRITICAL: Forces Remount when key changes */}
       <LoadScript 
-        googleMapsApiKey={apiKey} 
+        key={effectiveKey} 
+        googleMapsApiKey={effectiveKey} 
         libraries={libraries}
         onError={handleLoadError}
       >

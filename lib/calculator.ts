@@ -1,4 +1,3 @@
-
 import { 
   CITY_SOLAR_DATA, 
   DIRECTION_EFFICIENCY, 
@@ -36,6 +35,11 @@ const findClosestCityData = (lat: number, lng: number) => {
             closestCityId = city.id;
         }
     });
+
+    // FIX: Warn if location is very far (> approx 200km or 1.8 degrees)
+    if (minDist > 1.8) {
+        console.warn(`Location is far from nearest city data point (Dist: ${minDist.toFixed(2)} deg). Solar estimates may vary.`);
+    }
     
     return {
         data: CITY_SOLAR_DATA[closestCityId],

@@ -39,14 +39,15 @@ export interface CityData {
 }
 
 export interface CalculationInput {
-  cityId: number; // Legacy, kept for fallback
-  coordinates?: { lat: number; lng: number }; // New exact location
-  locationName?: string; // New: Stores "District, City" from Google Maps
+  cityId: number; 
+  coordinates?: { lat: number; lng: number }; 
+  locationName?: string; 
   roofArea: number;
   roofDirection: RoofDirection;
   billAmount: number; // TL
   buildingType: BuildingType;
   consumptionProfile: ConsumptionProfile;
+  batteryCapacitykWh?: number; 
 }
 
 export interface MonthlyData {
@@ -68,7 +69,7 @@ export interface YearlyData {
   netProfit: number;
   roi: number;
   degradationFactor: number;
-  cashFlowWithoutSolar: number; // Comparison data
+  cashFlowWithoutSolar: number; 
 }
 
 export type ScenarioType = 'CONSERVATIVE' | 'OPTIMAL' | 'AGGRESSIVE';
@@ -100,8 +101,9 @@ export interface SimulationResult {
 
 export type LeadStatus = 'New' | 'Contacted' | 'OfferSent' | 'Closed';
 
+// DB'ye kaydedilecek ve oradan okunacak asıl Müşteri Modeli
 export interface Lead {
-  id: string;
+  id: string; // UUID from Supabase
   fullName: string;
   phone: string;
   email: string;
@@ -112,6 +114,8 @@ export interface Lead {
   roofArea: number;
   status: LeadStatus;
   createdAt: string;
+  // Raporu tekrar render etmek için gerekli input verisi
+  inputData: CalculationInput; 
 }
 
 export interface GlobalSettings {
@@ -121,33 +125,31 @@ export interface GlobalSettings {
   systemCostPerKw: number;
   energyInflationRate: number;
   panelDegradationRate: number;
-  maintenanceCostPercent: number; // Percent of CAPEX at year 10
+  maintenanceCostPercent: number; 
 }
-
-// --- NEW: Engineering Design Types ---
 
 export interface SolarPanel {
   id: string;
   brand: string;
   model: string;
-  powerW: number;      // e.g., 455 W
-  voc: number;         // Open Circuit Voltage (e.g., 49.3 V)
-  isc: number;         // Short Circuit Current
-  vmpp: number;        // Max Power Voltage
-  impp: number;        // Max Power Current
-  dimensions: { width: number; height: number }; // meters (e.g., 1.048 x 2.108)
-  tempCoeffVoc: number; // %/C (e.g., -0.27)
-  priceUSD: number;    // Wholesale price per panel
+  powerW: number;      
+  voc: number;         
+  isc: number;         
+  vmpp: number;        
+  impp: number;        
+  dimensions: { width: number; height: number }; 
+  tempCoeffVoc: number; 
+  priceUSD: number;    
 }
 
 export interface Inverter {
   id: string;
   brand: string;
   model: string;
-  powerKW: number;     // e.g., 10 kW
-  maxInputVoltage: number; // e.g., 1000 V
-  mpptVoltageRange: { min: number; max: number }; // e.g., 200 - 850 V
-  maxInputCurrent: number; // Max current per MPPT
+  powerKW: number;     
+  maxInputVoltage: number; 
+  mpptVoltageRange: { min: number; max: number }; 
+  maxInputCurrent: number; 
   priceUSD: number;
 }
 
@@ -157,32 +159,29 @@ export interface DesignResult {
   selectedInverter: Inverter;
   tiltAngle: number;
   
-  // Module 1: String Sizing
   stringDesign: {
     minPanels: number;
     maxPanels: number;
-    vocAtMinTemp: number; // Voltage at -10C
-    vmppAtMaxTemp: number; // Voltage at 70C
+    vocAtMinTemp: number; 
+    vmppAtMaxTemp: number; 
     isCompatible: boolean;
     reason?: string;
   };
 
-  // Module 2: Shadowing
   shadowAnalysis: {
-    minRowSpacing: number; // meters
-    solarAltitudeAngle: number; // degrees (Alpha) at Dec 21
+    minRowSpacing: number; 
+    solarAltitudeAngle: number; 
     shadowLength: number;
   };
 
-  // Module 3: Capacity & Layout (Updated for 2D Grid)
   layoutAnalysis: {
     totalPanelCount: number;
     rows: number;
     columns: number;
     usedArea: number;
-    packingEfficiency: number; // % of roof used
+    packingEfficiency: number; 
     totalDCSizeKW: number;
     roofDim: { width: number; length: number };
-    visualGrid: { x: number; y: number; w: number; h: number }[]; // Coordinates for rendering
+    visualGrid: { x: number; y: number; w: number; h: number }[]; 
   };
 }

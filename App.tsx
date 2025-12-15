@@ -1,507 +1,40 @@
-
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  ArrowRight, 
-  Sun, 
-  CheckCircle, 
-  Zap, 
-  Settings as SettingsIcon,
-  LayoutDashboard,
-  Home,
-  ChevronLeft,
-  Users,
-  LogOut,
-  Compass,
-  Info,
-  DollarSign,
-  Download,
-  Share2,
-  AlertTriangle,
-  Award,
-  Leaf,
-  Loader2,
-  PenTool,
-  Grid,
-  Maximize,
-  Ruler,
-  Box,
-  Factory,
-  Building,
-  Briefcase,
-  Moon,
-  Clock,
-  Key
+  Sun, Zap, LayoutDashboard, Home,
+  LogOut, Info, Download, Award, Leaf,
+  Loader2, PenTool, Factory, Briefcase, Moon, Clock, Lock,
+  FileQuestion, Trees
 } from 'lucide-react';
 import { 
-  Button, 
-  Card, 
-  CardContent, 
-  CardHeader, 
-  CardTitle, 
-  Input, 
-  Select, 
-  Tabs, 
-  TabsList, 
-  TabsTrigger, 
-  TabsContent, 
-  Toast,
-  Progress,
-  Dialog,
-  Badge
+  Button, Card, CardContent, CardHeader, CardTitle, Input, Tabs, TabsList, TabsTrigger, 
+  TabsContent, Progress, Badge, Logo
 } from './components/ui/UIComponents';
+import Hero from './components/ui/animated-shader-hero';
 import { RoofMapper } from './components/RoofMapper';
 import { ProductionChart, FinancialComparisonChart, ROIChart } from './components/Charts';
 import { LeadForm } from './components/LeadForm';
-import { CITIES, DEFAULT_SETTINGS, MOCK_PANELS, MOCK_INVERTERS, TARIFF_RATES } from './constants';
+import { AdminDashboard } from './components/AdminDashboard'; // Imported Extracted Component
+import { DEFAULT_SETTINGS, TARIFF_RATES } from './constants';
 import { calculateSolarSystem } from './lib/calculator';
-import { performEngineeringDesign } from './lib/engineeringCalculator';
-import { SettingsService, LeadService, AuthService } from './services/mockService';
-import { CalculationInput, SimulationResult, RoofDirection, GlobalSettings, Lead, LeadStatus, ScenarioType, SolarPanel, Inverter, DesignResult, BuildingType, ConsumptionProfile } from './types';
+import { SettingsService, AuthService } from './services/mockService';
+import { DB } from './services/db';
+import { CalculationInput, SimulationResult, RoofDirection, GlobalSettings, BuildingType, ConsumptionProfile, ScenarioType } from './types';
 
-// Imports for PDF generation
+// PDF imports
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 
 // --- Configuration ---
-// Updated with the provided valid key.
-// SECURITY NOTE: Ensure this key is restricted by HTTP Referrer in Google Cloud Console.
-const DEFAULT_GOOGLE_MAPS_API_KEY = "AIzaSyAaa5cznPQZJ7wrGMUgZ3QUEvGiaf8zgBo";
+const DEV_MAP_KEY = ""; 
+const GOOGLE_MAPS_API_KEY = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY || DEV_MAP_KEY;
 
 // --- Types ---
-type View = 'WIZARD' | 'RESULT' | 'ADMIN_LOGIN' | 'ADMIN_DASHBOARD';
+type View = 'LANDING' | 'WIZARD' | 'RESULT' | 'ADMIN_LOGIN' | 'ADMIN_DASHBOARD';
 type WizardStep = 'ROOF_MAP' | 'PROFILE' | 'BILL';
 
 // --- Components ---
 
-const Wizard = ({ 
-    step, 
-    setStep, 
-    data, 
-    setData, 
-    onCalculate,
-    apiKey
-}: { 
-    step: WizardStep, 
-    setStep: (s: WizardStep) => void, 
-    data: CalculationInput, 
-    setData: (d: CalculationInput) => void, 
-    onCalculate: () => void,
-    apiKey: string
-}) => {
-    
-    // Smart Defaults
-    useEffect(() => {
-        if (step === 'BILL' && data.billAmount === 0 && data.buildingType) {
-            // Suggest bill based on building type
-            const defaults = {
-                [BuildingType.MESKEN]: 1500,
-                [BuildingType.TICARETHANE]: 8000,
-                [BuildingType.SANAYI]: 50000
-            };
-            setData({ ...data, billAmount: defaults[data.buildingType] || 2000 });
-        }
-    }, [step, data.buildingType]);
-
-    const progressValue = step === 'ROOF_MAP' ? 33 : step === 'PROFILE' ? 66 : 100;
-    
-    const handleNext = () => {
-        if (step === 'ROOF_MAP') {
-            if(!data.roofArea || data.roofArea === 0) return alert('Lütfen harita üzerinden çatınızı çiziniz veya manuel giriş yapınız.');
-            setStep('PROFILE');
-        }
-        else if (step === 'PROFILE') {
-            if(!data.buildingType) return alert('Lütfen bina tipini seçiniz.');
-            setStep('BILL');
-        }
-        else if (step === 'BILL') {
-            if(!data.billAmount) return alert('Lütfen fatura tutarı giriniz.');
-            onCalculate();
-        }
-    };
-
-    const handleBack = () => {
-        if (step === 'PROFILE') setStep('ROOF_MAP');
-        if (step === 'BILL') setStep('PROFILE');
-    };
-
-    const handleRoofComplete = (result: { area: number, coordinates: { lat: number; lng: number }, locationName?: string }) => {
-        setData({
-            ...data,
-            roofArea: result.area,
-            coordinates: result.coordinates,
-            locationName: result.locationName
-        });
-        // Auto advance after short delay for UX
-        setTimeout(() => setStep('PROFILE'), 1000);
-    };
-
-    return (
-        <div className="max-w-3xl mx-auto mt-8 px-4 pb-20">
-            <div className="mb-6 text-center">
-                 <h2 className="text-2xl font-bold text-navy-900 mb-2">Solar Hesaplama Sihirbazı</h2>
-                 <p className="text-slate-500 text-sm">3 adımda güneş enerjisi potansiyelinizi öğrenin.</p>
-            </div>
-
-            <div className="mb-8 max-w-xl mx-auto">
-                <Progress value={progressValue} className="h-2" />
-                <div className="flex justify-between mt-2 text-xs text-slate-400 font-medium uppercase tracking-wider">
-                    <span className={step === 'ROOF_MAP' ? 'text-energy-600' : ''}>Çatı Çizimi</span>
-                    <span className={step === 'PROFILE' ? 'text-energy-600' : ''}>Profil</span>
-                    <span className={step === 'BILL' ? 'text-energy-600' : ''}>Tüketim</span>
-                </div>
-            </div>
-
-            <Card className="shadow-2xl border-0 ring-1 ring-slate-100 overflow-hidden">
-                <CardContent className="space-y-6 pt-8 pb-8">
-                    
-                    {/* STEP 1: ROOF MAPPING */}
-                    {step === 'ROOF_MAP' && (
-                        <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-                            <div className="mb-4 text-center">
-                                <h3 className="text-lg font-semibold text-slate-800">Çatınızı Belirleyin</h3>
-                                <p className="text-sm text-slate-500">Adresinizi arayın ve çatınızın köşelerini işaretleyerek alanını ölçün.</p>
-                            </div>
-                            
-                            <RoofMapper 
-                                apiKey={apiKey} 
-                                onComplete={handleRoofComplete} 
-                            />
-                            
-                            {data.roofArea > 0 && (
-                                <div className="mt-4 p-4 bg-green-50 text-green-800 rounded-lg flex items-center justify-center gap-2 animate-in zoom-in duration-300">
-                                    <CheckCircle className="h-5 w-5" />
-                                    <span>Seçilen Alan: <strong>{data.roofArea} m²</strong></span>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {/* STEP 2: BUILDING & PROFILE */}
-                    {step === 'PROFILE' && (
-                        <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
-                            
-                            {/* Building Type Selection */}
-                            <div>
-                                <h3 className="text-lg font-semibold text-slate-800 mb-4 text-center">Bina Tipi Nedir?</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                    {[
-                                        { id: BuildingType.MESKEN, icon: Home, label: 'Müstakil Ev / Villa', desc: 'Düşük Tarife' },
-                                        { id: BuildingType.TICARETHANE, icon: Briefcase, label: 'İş Yeri / Ofis', desc: 'Yüksek Tarife, Hızlı ROI' },
-                                        { id: BuildingType.SANAYI, icon: Factory, label: 'Fabrika / Depo', desc: 'Endüstriyel Tarife' }
-                                    ].map((item) => (
-                                        <div 
-                                            key={item.id}
-                                            onClick={() => setData({...data, buildingType: item.id})}
-                                            className={`cursor-pointer p-6 rounded-xl border-2 transition-all hover:shadow-lg flex flex-col items-center text-center gap-3 ${
-                                                data.buildingType === item.id 
-                                                ? 'border-energy-500 bg-energy-50 text-navy-900 ring-2 ring-energy-500 ring-offset-2' 
-                                                : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
-                                            }`}
-                                        >
-                                            <div className={`p-3 rounded-full ${data.buildingType === item.id ? 'bg-energy-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                                <item.icon className="h-6 w-6" />
-                                            </div>
-                                            <div>
-                                                <p className="font-bold text-sm">{item.label}</p>
-                                                <p className="text-xs opacity-70 mt-1">{item.desc}</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Consumption Profile Selection */}
-                            <div>
-                                <h3 className="text-lg font-semibold text-slate-800 mb-4 text-center">Elektrik Tüketim Zamanı</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                    {[
-                                        { id: ConsumptionProfile.GUNDUZ, icon: Sun, label: 'Gündüz Ağırlıklı', desc: '08:00 - 18:00' },
-                                        { id: ConsumptionProfile.DENGELI, icon: Clock, label: 'Dengeli (7/24)', desc: 'Ev / Home Office' },
-                                        { id: ConsumptionProfile.AKSAM, icon: Moon, label: 'Akşam Ağırlıklı', desc: '18:00 Sonrası' }
-                                    ].map((item) => (
-                                        <div 
-                                            key={item.id}
-                                            onClick={() => setData({...data, consumptionProfile: item.id})}
-                                            className={`cursor-pointer p-4 rounded-xl border transition-all hover:shadow-md flex items-center gap-4 ${
-                                                data.consumptionProfile === item.id 
-                                                ? 'border-blue-500 bg-blue-50 text-navy-900 shadow-md' 
-                                                : 'border-slate-200 bg-white text-slate-500'
-                                            }`}
-                                        >
-                                            <div className={`p-2 rounded-lg ${data.consumptionProfile === item.id ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                                <item.icon className="h-5 w-5" />
-                                            </div>
-                                            <div className="text-left">
-                                                <p className="font-bold text-sm">{item.label}</p>
-                                                <p className="text-xs opacity-70">{item.desc}</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                        </div>
-                    )}
-
-                    {/* STEP 3: BILL AMOUNT */}
-                    {step === 'BILL' && (
-                        <div className="animate-in fade-in slide-in-from-right-4 duration-300 max-w-md mx-auto text-center">
-                            <h3 className="text-lg font-semibold text-slate-800 mb-6">Son Adım: Fatura Bilgisi</h3>
-                            
-                            <div className="relative mb-6">
-                                <span className="absolute left-4 top-3.5 text-slate-400 font-bold">₺</span>
-                                <Input 
-                                    type="number"
-                                    min="100"
-                                    placeholder="Örn: 2000"
-                                    value={data.billAmount || ''}
-                                    onChange={(e) => setData({...data, billAmount: Number(e.target.value)})}
-                                    className="text-2xl py-6 pl-10 text-center font-bold text-navy-900"
-                                />
-                                <p className="text-xs text-slate-400 mt-2">Aylık ortalama elektrik faturası tutarı</p>
-                            </div>
-                            
-                            {data.buildingType && (
-                                <div className="mt-4 flex items-center justify-center gap-2 text-sm text-blue-700 bg-blue-50 p-3 rounded-md border border-blue-100">
-                                    <Zap className="h-4 w-4" />
-                                    <span>Seçilen Tarife: <strong>{TARIFF_RATES[data.buildingType]} TL/kWh</strong></span>
-                                </div>
-                            )}
-
-                            <div className="bg-yellow-50 text-yellow-800 p-4 rounded-lg mt-4 text-sm flex gap-3 border border-yellow-100 text-left">
-                                <Info className="h-5 w-5 shrink-0 text-yellow-600" />
-                                <p><strong>İpucu:</strong> Girdiğiniz fatura tutarı ve bina tipi üzerinden yıllık tüketiminiz (kWh) hesaplanacaktır.</p>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="flex justify-between pt-6 border-t border-slate-100 mt-6 max-w-2xl mx-auto">
-                        {step !== 'ROOF_MAP' ? (
-                            <Button variant="outline" onClick={handleBack} className="text-slate-500 border-slate-300">
-                                <ChevronLeft className="h-4 w-4 mr-2" /> Geri
-                            </Button>
-                        ) : <div />}
-                        
-                        <Button 
-                            onClick={handleNext} 
-                            disabled={step === 'ROOF_MAP' && data.roofArea === 0}
-                            className={`bg-energy-500 hover:bg-energy-600 text-white shadow-lg shadow-energy-500/20 px-8 ${step === 'ROOF_MAP' && data.roofArea === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        >
-                            {step === 'BILL' ? 'Analizi Başlat' : 'Devam Et'}
-                            {step !== 'BILL' && <ArrowRight className="h-4 w-4 ml-2" />}
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
-        </div>
-    );
-};
-
-// ... ResultView, AdminLogin, DesignStudio, AdminDashboard components remain largely the same, 
-// just ensuring they pass types correctly. (ResultView logic for display is fine).
-
-const ResultView = ({ 
-    result, 
-    onReset, 
-    inputData, 
-    leadSubmitted, 
-    setLeadSubmitted 
-}: { 
-    result: SimulationResult | null, 
-    onReset: () => void, 
-    inputData: CalculationInput,
-    leadSubmitted: boolean,
-    setLeadSubmitted: (v: boolean) => void
-}) => {
-    const [activeScenario, setActiveScenario] = useState<ScenarioType>('OPTIMAL');
-    const [showTechDetails, setShowTechDetails] = useState(false);
-    const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
-
-    if (!result) return null;
-
-    const currentData = result.scenarios[activeScenario];
-    const roi = currentData.roiYears;
-    const isGood = roi <= 7;
-    const isAverage = roi > 7 && roi <= 10;
-    
-    const trafficColor = isGood ? 'bg-green-100 border-green-200 text-green-800' : isAverage ? 'bg-yellow-50 border-yellow-100 text-yellow-800' : 'bg-red-50 border-red-100 text-red-800';
-    const trafficTitle = isGood ? 'Mükemmel Yatırım Fırsatı' : isAverage ? 'Makul Yatırım' : 'Dikkatli Değerlendirin';
-    const trafficDesc = isGood ? `Sisteminiz kendini ${roi} yılda amorti ediyor. Bu, borsadan veya dolardan daha yüksek bir getiri oranıdır.` : isAverage ? `Amortisman süresi ${roi} yıl. Uzun vadeli düşünüyorsanız kârlı bir yatırımdır.` : `Amortisman süresi ${roi} yıl. Çatı alanınız veya tüketiminiz verimli bir sistem için sınırda olabilir.`;
-
-    const formatCurrency = (amount: number, currency: 'TL' | 'USD' = 'TL') => {
-        const currencyCode = currency === 'TL' ? 'TRY' : 'USD';
-        return new Intl.NumberFormat('tr-TR', { 
-            style: 'currency', 
-            currency: currencyCode,
-            maximumFractionDigits: 0 
-        }).format(amount);
-    };
-
-    const handleDownloadPDF = async () => {
-        const element = document.getElementById('report-content');
-        if(!element) return;
-        setIsGeneratingPdf(true);
-        element.classList.add('pdf-mode');
-        try {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            const canvas = await html2canvas(element, {
-                scale: 2, 
-                useCORS: true,
-                logging: false,
-                backgroundColor: '#ffffff',
-                windowWidth: 1200
-            });
-            const imgData = canvas.toDataURL('image/png');
-            const pdf = new jsPDF({
-                orientation: 'landscape',
-                unit: 'mm',
-                format: 'a4'
-            });
-            const imgWidth = 297; 
-            const pageHeight = 210;
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-            pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
-            if (imgHeight > pageHeight) {
-                let heightLeft = imgHeight - pageHeight;
-                let position = -pageHeight;
-                while (heightLeft > 0) {
-                     pdf.addPage();
-                     pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-                     heightLeft -= pageHeight;
-                     position -= pageHeight;
-                }
-            }
-            pdf.save(`SolarSmart_Rapor_${result.city.name}.pdf`);
-        } catch (err) {
-            console.error("PDF creation failed", err);
-            alert("PDF oluşturulurken bir hata oluştu.");
-        } finally {
-            element.classList.remove('pdf-mode');
-            setIsGeneratingPdf(false);
-        }
-    };
-    
-    const handleShare = () => {
-        const text = `SolarSmart ile evimin güneş enerjisi potansiyelini hesapladım! 25 yılda ${formatCurrency(currentData.netProfit25Years)} tasarruf edebiliyorum.`;
-        window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
-    };
-
-    return (
-        <div className="container mx-auto px-4 py-8 animate-in fade-in zoom-in-95 duration-500 pb-24">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 no-print">
-                <div>
-                    <h1 className="text-2xl font-bold text-navy-900">Fizibilite Raporu</h1>
-                    <p className="text-slate-500 text-sm">{result.city.name} lokasyonu için özel analiz</p>
-                </div>
-                <div className="flex gap-2 w-full md:w-auto">
-                    <Button variant="outline" size="sm" onClick={handleDownloadPDF} className="flex-1 md:flex-none" disabled={isGeneratingPdf}>
-                        {isGeneratingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />} 
-                        {isGeneratingPdf ? 'Rapor Oluşturuluyor...' : 'PDF İndir'}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={handleShare} className="flex-1 md:flex-none"><Share2 className="h-4 w-4 mr-2" /> WhatsApp</Button>
-                    <Button variant="ghost" size="sm" onClick={onReset} className="flex-1 md:flex-none text-red-600 hover:text-red-700 hover:bg-red-50"><LogOut className="h-4 w-4 mr-2" /> Çıkış</Button>
-                </div>
-            </div>
-
-            <div id="report-content" className="bg-slate-50 p-1 md:p-4 rounded-xl transition-all">
-                <div className="pdf-header flex-col items-center justify-center mb-8 pb-6 border-b border-slate-200">
-                    <div className="flex items-center gap-2 mb-2">
-                        <div className="bg-energy-500 p-2 rounded-full"><Sun className="h-8 w-8 text-white" /></div>
-                        <span className="text-3xl font-bold text-navy-900">SolarSmart</span>
-                    </div>
-                    <h2 className="text-xl font-medium text-slate-600">Güneş Enerjisi Fizibilite Raporu</h2>
-                    <p className="text-sm text-slate-400 mt-1">{new Date().toLocaleDateString('tr-TR')} - {result.city.name}</p>
-                </div>
-
-                <div className={`p-4 rounded-xl border mb-6 flex items-start gap-4 ${trafficColor} shadow-sm print-break-inside-avoid`}>
-                    <div className={`p-2 rounded-full ${isGood ? 'bg-green-200' : isAverage ? 'bg-yellow-200' : 'bg-red-200'}`}>
-                        {isGood ? <Award className="h-6 w-6" /> : <AlertTriangle className="h-6 w-6" />}
-                    </div>
-                    <div>
-                        <h3 className="font-bold text-lg">{trafficTitle}</h3>
-                        <p className="text-sm opacity-90 mt-1">{trafficDesc}</p>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 space-y-6">
-                        <Tabs className="w-full no-print no-pdf">
-                            <TabsList className="w-full grid grid-cols-3 bg-white border border-slate-200 p-1 h-auto">
-                                <TabsTrigger active={activeScenario === 'CONSERVATIVE'} onClick={() => setActiveScenario('CONSERVATIVE')} className="py-3 data-[active=true]:bg-navy-50 data-[active=true]:text-navy-900">
-                                    <div className="flex flex-col items-center"><span className="font-bold">Muhafazakâr</span><span className="text-xs opacity-60 mt-1">%70 Tüketim</span></div>
-                                </TabsTrigger>
-                                <TabsTrigger active={activeScenario === 'OPTIMAL'} onClick={() => setActiveScenario('OPTIMAL')} className="py-3 data-[active=true]:bg-energy-50 data-[active=true]:text-energy-700">
-                                    <div className="flex flex-col items-center"><span className="font-bold">⭐ Optimal</span><span className="text-xs opacity-60 mt-1">%100 Tüketim</span></div>
-                                </TabsTrigger>
-                                <TabsTrigger active={activeScenario === 'AGGRESSIVE'} onClick={() => setActiveScenario('AGGRESSIVE')} className="py-3 data-[active=true]:bg-green-50 data-[active=true]:text-green-700">
-                                    <div className="flex flex-col items-center"><span className="font-bold">Maksimum</span><span className="text-xs opacity-60 mt-1">%120 Satış</span></div>
-                                </TabsTrigger>
-                            </TabsList>
-                        </Tabs>
-
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <Card className="bg-navy-900 text-white border-0"><CardContent className="p-4 text-center"><span className="text-slate-400 text-xs">Sistem Gücü</span><div className="text-2xl font-bold text-energy-500 mt-1">{currentData.systemSizeKW} kWp</div><span className="text-xs text-slate-500">{currentData.panelCount} Panel</span></CardContent></Card>
-                            <Card><CardContent className="p-4 text-center"><span className="text-slate-500 text-xs">Yatırım Maliyeti</span><div className="text-xl font-bold text-navy-900 mt-1">{formatCurrency(currentData.totalCostUSD, 'USD')}</div><span className="text-xs text-slate-400">~{formatCurrency(currentData.totalCostTL, 'TL')}</span></CardContent></Card>
-                            <Card><CardContent className="p-4 text-center"><span className="text-slate-500 text-xs">Amortisman</span><div className="text-2xl font-bold text-green-600 mt-1">{currentData.roiYears} Yıl</div><span className="text-xs text-slate-400">Geri Dönüş</span></CardContent></Card>
-                            <Card><CardContent className="p-4 text-center"><span className="text-slate-500 text-xs">25 Yıllık Kâr</span><div className="text-xl font-bold text-blue-600 mt-1">{formatCurrency(currentData.netProfit25Years, 'TL')}</div><span className="text-xs text-slate-400">Net Kazanç</span></CardContent></Card>
-                        </div>
-
-                        <div id="summary-charts" className="space-y-6">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-96 print-break-inside-avoid"><ProductionChart result={currentData} /><FinancialComparisonChart result={currentData} /></div>
-                            <div className="h-80 print-break-inside-avoid"><ROIChart result={currentData} /></div>
-                        </div>
-
-                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm print-break-inside-avoid">
-                            <h4 className="font-semibold text-slate-800 mb-4 flex items-center gap-2"><Award className="h-5 w-5 text-energy-500" />Kazanılan Rozetler</h4>
-                            <div className="flex flex-wrap gap-4">
-                                <div className="flex items-center gap-3 bg-green-50 p-3 rounded-lg border border-green-100"><div className="bg-green-200 p-2 rounded-full"><Leaf className="h-5 w-5 text-green-700" /></div><div><p className="font-bold text-green-900 text-sm">Doğa Dostu</p><p className="text-xs text-green-700">{currentData.co2Saved} Ton CO₂ Engellendi</p></div></div>
-                                <div className="flex items-center gap-3 bg-blue-50 p-3 rounded-lg border border-blue-100"><div className="bg-blue-200 p-2 rounded-full"><DollarSign className="h-5 w-5 text-blue-700" /></div><div><p className="font-bold text-blue-900 text-sm">Enerji Bağımsızlığı</p><p className="text-xs text-blue-700">Elektriğin %{Math.min(100, currentData.selfConsumptionRate).toFixed(0)}'ini kendin üret</p></div></div>
-                            </div>
-                        </div>
-
-                        <div className="text-center no-print no-pdf"><button onClick={() => setShowTechDetails(true)} className="text-xs text-slate-400 hover:text-slate-600 underline">Hesaplama metodolojisi ve mühendislik detaylarını gör</button></div>
-                    </div>
-
-                    <div className="lg:col-span-1 no-print right-column">
-                        <Card className={`border-t-4 ${leadSubmitted ? 'border-green-500' : 'border-energy-500'} h-auto shadow-xl sticky top-6`}>
-                            <CardHeader className="bg-slate-50 border-b border-slate-100"><CardTitle className="text-lg">{leadSubmitted ? 'Talebiniz Alındı!' : 'Ücretsiz Keşif İste'}</CardTitle></CardHeader>
-                            <CardContent className="pt-6">
-                                {leadSubmitted ? (
-                                    <div className="text-center py-8">
-                                        <div className="bg-green-100 p-4 rounded-full inline-flex mb-4 animate-in zoom-in duration-300"><CheckCircle className="h-10 w-10 text-green-600" /></div>
-                                        <p className="text-slate-800 font-bold mb-2">Teşekkürler!</p>
-                                        <p className="text-sm text-slate-500 mb-2">Başvurunuz başarıyla ulaştı.</p>
-                                        <p className="text-xs text-slate-400 mb-6">Detaylı bilgilendirme e-postası adresinize gönderilmiştir.</p>
-                                        <Button variant="outline" className="w-full" onClick={onReset}>Yeni Hesaplama Yap</Button>
-                                    </div>
-                                ) : (
-                                    <><p className="text-sm text-slate-600 mb-6 leading-relaxed">Bu rapor bir simülasyondur. Evinize özel net fiyat teklifi ve gölge analizi için formu doldurun.</p><LeadForm inputData={inputData} resultData={currentData} onSuccess={() => setLeadSubmitted(true)} /><div className="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-400 text-center"><p>7.000+ mutlu müşteri SolarSmart altyapısını kullanıyor.</p></div></>
-                                )}
-                            </CardContent>
-                        </Card>
-                    </div>
-                </div>
-                <div className="hidden pdf-header text-center mt-10 text-slate-400 text-xs"><p>Bu rapor SolarSmart Altyapısı ile oluşturulmuştur. www.solarsmart.com.tr</p></div>
-            </div>
-
-            <Dialog isOpen={showTechDetails} onClose={() => setShowTechDetails(false)} title="Mühendislik Varsayımları">
-                <div className="space-y-4 text-sm text-slate-600">
-                    <p>SolarSmart hesaplama motoru, uluslararası IEC 61724 standartlarına uygun olarak aşağıdaki parametreleri kullanır:</p>
-                    <ul className="list-disc pl-5 space-y-2">
-                        <li><strong>Işınım Verisi:</strong> GEPA (Güneş Enerjisi Potansiyeli Atlası) ve NASA POWER veritabanlarından alınan 10 yıllık ortalama veriler.</li>
-                        <li><strong>Sistem Kayıpları:</strong> Kablo, inverter dönüşümü, sıcaklık ve kirlenme kayıpları senaryoya göre %12 ile %20 arasında modellenmiştir.</li>
-                        <li><strong>Panel Degradasyonu:</strong> İlk yıl %2, sonraki yıllar %0.5 verim kaybı (Linear Warranty Standard).</li>
-                        <li><strong>Finansal:</strong> Yıllık enerji enflasyonu %{DEFAULT_SETTINGS.energyInflationRate * 100}, bakım maliyetleri ve 10. yılda inverter değişimi hesaba katılmıştır.</li>
-                        <li><strong>Simülasyon:</strong> Hesaplamalar aylık bazda üretim/tüketim dengesi kurularak (Net Metering) yapılmaktadır.</li>
-                    </ul>
-                </div>
-            </Dialog>
-        </div>
-    );
-};
-
 const AdminLogin = ({ onLogin }: { onLogin: () => void }) => {
-    // ... (Login code unchanged)
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
 
@@ -515,214 +48,351 @@ const AdminLogin = ({ onLogin }: { onLogin: () => void }) => {
     };
 
     return (
-        <div className="flex items-center justify-center min-h-[calc(100vh-80px)]">
-            <Card className="w-full max-w-md shadow-2xl">
-                <CardHeader>
-                    <CardTitle>Admin Girişi</CardTitle>
+        <div className="flex items-center justify-center min-h-[calc(100vh-160px)] animate-in fade-in duration-500">
+            <Card className="w-full max-w-md shadow-2xl border-t-4 border-t-navy-900">
+                <CardHeader className="text-center pb-2">
+                    <div className="mx-auto bg-navy-50 w-12 h-12 rounded-full flex items-center justify-center mb-4">
+                        <Lock className="h-6 w-6 text-navy-900" />
+                    </div>
+                    <CardTitle>Yönetici Girişi</CardTitle>
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleLogin} className="space-y-4">
-                        <Input type="password" placeholder="Şifre" value={password} onChange={e => setPassword(e.target.value)} error={error} />
-                        <Button type="submit" className="w-full">Giriş Yap</Button>
+                        <Input 
+                            type="password" 
+                            placeholder="Şifre" 
+                            value={password} 
+                            onChange={e => setPassword(e.target.value)} 
+                            error={error} 
+                            autoFocus
+                        />
+                        <Button type="submit" className="w-full bg-navy-900 hover:bg-navy-800">Giriş Yap</Button>
                     </form>
+                    <div className="mt-4 text-center text-xs text-slate-400">
+                        Demo Şifresi: <strong>admin123</strong>
+                    </div>
                 </CardContent>
             </Card>
         </div>
     );
 };
 
-// ... DesignStudio and AdminDashboard remain essentially the same, just imports updated
-
-const DesignStudio = ({ leads }: { leads: Lead[] }) => {
-    // ... (Existing implementation, just needs to handle new lead data structure if needed, but works fine with existing interfaces)
-    // Reuse existing implementation but ensure imports are clean. 
-    // Since we are modifying App.tsx completely, we must include the full code for DesignStudio & AdminDashboard or they get lost.
-    
-    // START RE-INJECTING EXISTING ADMIN COMPONENTS TO KEEP THEM WORKING
-    const [selectedLeadId, setSelectedLeadId] = useState<string>('');
-    const [selectedPanelId, setSelectedPanelId] = useState<string>('p1');
-    const [selectedInverterId, setSelectedInverterId] = useState<string>('inv1');
-    const [tiltAngle, setTiltAngle] = useState<number>(20);
-    const [isFlatRoof, setIsFlatRoof] = useState<boolean>(false);
-    
-    const [roofWidth, setRoofWidth] = useState<number>(10);
-    const [roofLength, setRoofLength] = useState<number>(10);
-    
-    const [designResult, setDesignResult] = useState<DesignResult | null>(null);
-
+// --- Wizard Component ---
+const Wizard = ({ step, setStep, data, setData, onCalculate, apiKey }: any) => {
     useEffect(() => {
-        if(selectedLeadId) {
-            const lead = leads.find(l => l.id === selectedLeadId);
-            if(lead) {
-                const side = Math.sqrt(lead.roofArea);
-                setRoofWidth(parseFloat(side.toFixed(1)));
-                setRoofLength(parseFloat(side.toFixed(1)));
-            }
+        if (step === 'BILL' && data.billAmount === 0 && data.buildingType) {
+            const defaults: any = { [BuildingType.MESKEN]: 1500, [BuildingType.TICARETHANE]: 8000, [BuildingType.SANAYI]: 50000 };
+            setData({ ...data, billAmount: defaults[data.buildingType] || 2000 });
         }
-    }, [selectedLeadId, leads]);
-
-    const handleDesign = () => {
-        if (!selectedLeadId) return alert("Lütfen bir müşteri seçiniz.");
-        const lead = leads.find(l => l.id === selectedLeadId);
-        if (!lead) return;
-
-        // Try to match city from lead string or default
-        const city = CITIES.find(c => c.name === lead.city) || CITIES[5]; 
-        const panel = MOCK_PANELS.find(p => p.id === selectedPanelId);
-        const inverter = MOCK_INVERTERS.find(i => i.id === selectedInverterId);
-
-        if (!city || !panel || !inverter) return alert("Veri hatası.");
-
-        const result = performEngineeringDesign(lead.id, city, roofWidth, roofLength, panel, inverter, tiltAngle, isFlatRoof);
-        setDesignResult(result);
-    };
-
-    const panelOptions = MOCK_PANELS.map(p => ({ label: `${p.brand} - ${p.powerW}W`, value: p.id }));
-    const inverterOptions = MOCK_INVERTERS.map(i => ({ label: `${i.brand} - ${i.powerKW}kW`, value: i.id }));
-    const leadOptions = leads.map(l => ({ label: `${l.fullName} (${l.city})`, value: l.id }));
-
-    const GridPreview = ({ result }: { result: DesignResult }) => {
-        const { roofDim, visualGrid } = result.layoutAnalysis;
-        const padding = 1;
-        const viewBoxW = roofDim.width + padding * 2;
-        const viewBoxH = roofDim.length + padding * 2;
-
-        return (
-            <div className="w-full bg-slate-100 rounded-lg p-4 flex justify-center border border-slate-300 overflow-hidden">
-                <svg 
-                    viewBox={`-${padding} -${padding} ${viewBoxW} ${viewBoxH}`} 
-                    className="max-h-[350px] w-auto border-2 border-dashed border-slate-400 bg-white shadow-sm"
-                    style={{ aspectRatio: `${roofDim.width}/${roofDim.length}` }}
-                >
-                    <rect x="0" y="0" width={roofDim.width} height={roofDim.length} fill="#f1f5f9" stroke="#94a3b8" strokeWidth="0.05" />
-                    {visualGrid.map((p, idx) => (
-                        <rect key={idx} x={p.x} y={p.y} width={p.w} height={p.h} fill="#0f172a" stroke="#334155" strokeWidth="0.02" opacity="0.9" />
-                    ))}
-                    <text x={roofDim.width / 2} y="-0.2" fontSize="0.3" textAnchor="middle" fill="#64748b">{roofDim.width}m</text>
-                    <text x="-0.2" y={roofDim.length / 2} fontSize="0.3" textAnchor="middle" fill="#64748b" transform={`rotate(-90, -0.2, ${roofDim.length / 2})`}>{roofDim.length}m</text>
-                </svg>
-            </div>
-        )
-    };
-
+    }, [step, data.buildingType]);
+    
+    const progressValue = step === 'ROOF_MAP' ? 33 : step === 'PROFILE' ? 66 : 100;
+    
     return (
-        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <Card className="border-t-4 border-t-purple-600 shadow-lg">
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><PenTool className="h-5 w-5 text-purple-600" /> Proje Tasarım Stüdyosu</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        <Select label="Müşteri (Lead)" options={leadOptions} value={selectedLeadId} onChange={e => setSelectedLeadId(e.target.value)} />
-                        <Select label="Panel Modeli" options={panelOptions} value={selectedPanelId} onChange={e => setSelectedPanelId(e.target.value)} />
-                        <Select label="İnverter Modeli" options={inverterOptions} value={selectedInverterId} onChange={e => setSelectedInverterId(e.target.value)} />
-                        <div className="space-y-4">
-                           <div className="flex gap-4">
-                                <Input label="Panel Açısı (°)" type="number" value={tiltAngle} onChange={e => setTiltAngle(Number(e.target.value))} />
-                                <div className="flex items-center pt-6">
-                                     <input type="checkbox" id="flatRoof" checked={isFlatRoof} onChange={e => setIsFlatRoof(e.target.checked)} className="mr-2 h-4 w-4" />
-                                     <label htmlFor="flatRoof" className="text-sm font-medium">Düz Çatı</label>
-                                </div>
-                           </div>
+        <div className="max-w-3xl mx-auto mt-8 px-4 pb-20 animate-in fade-in duration-300">
+            <div className="mb-6 text-center"><h2 className="text-2xl font-bold text-navy-900 mb-2">Solar Hesaplama Sihirbazı</h2></div>
+            <div className="mb-8 max-w-xl mx-auto"><Progress value={progressValue} className="h-2" /></div>
+            <Card className="shadow-2xl border-0 ring-1 ring-slate-100 overflow-hidden"><CardContent className="space-y-6 pt-8 pb-8">
+                {step === 'ROOF_MAP' && (
+                    <div className="space-y-4">
+                        <div className="text-center mb-6">
+                            <h3 className="text-xl font-bold text-navy-900">Çatı Alanınızı Belirleyin</h3>
+                            <p className="text-slate-500 text-sm">Harita üzerinden çatınızı bulun ve köşelerini işaretleyerek alanını ölçün.</p>
                         </div>
-                        <Input label="Çatı Eni (m)" type="number" step="0.1" value={roofWidth} onChange={e => setRoofWidth(Number(e.target.value))} />
-                        <Input label="Çatı Boyu (m)" type="number" step="0.1" value={roofLength} onChange={e => setRoofLength(Number(e.target.value))} />
+                        <RoofMapper apiKey={apiKey} onComplete={(res) => { setData({...data, roofArea: res.area, coordinates: res.coordinates, locationName: res.locationName}); setTimeout(()=>setStep('PROFILE'),500); }} />
                     </div>
-                    <div className="mt-6 flex justify-end">
-                        <Button onClick={handleDesign} className="bg-purple-600 hover:bg-purple-700 text-white"><Zap className="h-4 w-4 mr-2" /> Mühendislik Analizini Çalıştır</Button>
+                )}
+                
+                {step === 'PROFILE' && (
+                    <div>
+                        <div className="text-center mb-6">
+                            <h3 className="text-xl font-bold text-navy-900">Bina Tipi Nedir?</h3>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                            {[
+                                { id: BuildingType.MESKEN, icon: Home, label: 'Müstakil Ev / Villa', desc: 'Düşük Tarife' },
+                                { id: BuildingType.TICARETHANE, icon: Briefcase, label: 'İş Yeri / Ofis', desc: 'Yüksek Tarife, Hızlı ROI' },
+                                { id: BuildingType.SANAYI, icon: Factory, label: 'Fabrika / Depo', desc: 'Endüstriyel Tarife' }
+                            ].map((item) => (
+                                <div 
+                                    key={item.id} 
+                                    onClick={() => setData({...data, buildingType: item.id})} 
+                                    className={`cursor-pointer p-6 rounded-xl border-2 text-center transition-all hover:shadow-md h-full flex flex-col items-center justify-center ${data.buildingType === item.id ? 'border-energy-500 ring-2 ring-energy-200' : 'border-slate-200 hover:border-energy-300'}`}
+                                >
+                                    <div className={`w-14 h-14 mx-auto rounded-full flex items-center justify-center mb-4 ${data.buildingType === item.id ? 'bg-energy-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                        <item.icon className="h-7 w-7"/>
+                                    </div>
+                                    <p className={`font-bold text-navy-900 mb-1 ${data.buildingType === item.id ? 'text-lg' : ''}`}>{item.label}</p>
+                                    <p className="text-xs text-slate-500">{item.desc}</p>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="text-center mb-4 mt-8">
+                            <h3 className="text-lg font-bold text-navy-900">Elektrik Tüketim Zamanı</h3>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {[
+                                { id: ConsumptionProfile.GUNDUZ, icon: Sun, label: 'Gündüz Ağırlıklı', desc: '08:00 - 18:00' },
+                                { id: ConsumptionProfile.DENGELI, icon: Clock, label: 'Dengeli (7/24)', desc: 'Ev / Home Office' },
+                                { id: ConsumptionProfile.AKSAM, icon: Moon, label: 'Akşam Ağırlıklı', desc: '18:00 Sonrası' }
+                            ].map((item) => (
+                                <div 
+                                    key={item.id} 
+                                    onClick={() => setData({...data, consumptionProfile: item.id})} 
+                                    className={`cursor-pointer px-4 py-4 rounded-xl border flex items-center gap-4 transition-all hover:shadow-sm ${data.consumptionProfile === item.id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-200' : 'border-slate-200 hover:border-slate-300'}`}
+                                >
+                                    <div className={`p-2 rounded-lg ${data.consumptionProfile === item.id ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                        <item.icon className="h-5 w-5"/>
+                                    </div>
+                                    <div className="text-left">
+                                        <p className="font-bold text-sm text-navy-900">{item.label}</p>
+                                        <p className="text-xs text-slate-500">{item.desc}</p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="col-span-3 mt-8 flex justify-between">
+                             <Button variant="ghost" onClick={() => setStep('ROOF_MAP')}>&larr; Geri</Button>
+                             <Button onClick={() => setStep('BILL')}>Devam Et &rarr;</Button>
+                        </div>
                     </div>
-                </CardContent>
-            </Card>
-            {designResult && (
-                <>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <Card className={`border-l-4 ${designResult.stringDesign.isCompatible ? 'border-l-green-500' : 'border-l-red-500'}`}>
-                        <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Grid className="h-5 w-5 text-slate-500" /> Dizi (String) Tasarımı</CardTitle></CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="flex justify-between items-center bg-slate-50 p-3 rounded">
-                                <span className="text-sm text-slate-500">Uyumluluk</span>
-                                <Badge variant={designResult.stringDesign.isCompatible ? 'success' : 'warning'}>{designResult.stringDesign.isCompatible ? 'UYGUN' : 'UYGUNSUZ'}</Badge>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 text-sm">
-                                <div><p className="text-slate-400 text-xs">Min Panel</p><p className="font-bold text-lg">{designResult.stringDesign.minPanels}</p></div>
-                                <div><p className="text-slate-400 text-xs">Max Panel</p><p className="font-bold text-lg">{designResult.stringDesign.maxPanels}</p></div>
-                            </div>
-                        </CardContent>
-                    </Card>
-                    <Card className="border-l-4 border-l-energy-500">
-                        <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Maximize className="h-5 w-5 text-slate-500" /> Kapasite</CardTitle></CardHeader>
-                        <CardContent className="space-y-4">
-                             <div className="grid grid-cols-2 gap-4">
-                                 <div><p className="text-xs text-slate-400">Sığan Panel</p><p className="text-2xl font-bold text-navy-900">{designResult.layoutAnalysis.totalPanelCount}</p></div>
-                                 <div><p className="text-xs text-slate-400">DC Güç</p><p className="text-2xl font-bold text-energy-600">{designResult.layoutAnalysis.totalDCSizeKW} kWp</p></div>
-                             </div>
-                             <Progress value={designResult.layoutAnalysis.packingEfficiency} className="h-1.5 mt-2" />
-                        </CardContent>
-                    </Card>
-                </div>
-                <Card className="mt-6 shadow-md border-slate-300">
-                    <CardHeader className="bg-slate-50 border-b border-slate-200">
-                         <CardTitle className="flex items-center gap-2 text-base"><LayoutDashboard className="h-5 w-5 text-slate-600" /> 2D Yerleşim</CardTitle>
-                    </CardHeader>
-                    <CardContent className="p-8"><GridPreview result={designResult} /></CardContent>
-                </Card>
-                </>
-            )}
+                )}
+                
+                {step === 'BILL' && (
+                    <div className="text-center max-w-lg mx-auto py-2">
+                        <h3 className="text-2xl font-bold text-navy-900 mb-8">Son Adım: Fatura Bilgisi</h3>
+                        <div className="relative mb-6">
+                            <Input 
+                                type="number" 
+                                value={data.billAmount || ''} 
+                                onChange={(e) => setData({...data, billAmount: Number(e.target.value)})} 
+                                className="text-4xl text-center py-8 font-bold text-navy-900 tracking-tight border-slate-300 shadow-sm" 
+                                placeholder="1500"
+                                autoFocus
+                            />
+                            <span className="absolute left-8 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-2xl">₺</span>
+                            <p className="text-xs text-slate-400 mt-2">Aylık ortalama elektrik faturası tutarı</p>
+                        </div>
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg py-3 px-4 mb-6 inline-flex items-center gap-2">
+                            <Zap className="h-4 w-4 text-blue-600 fill-blue-600" />
+                            <span className="text-blue-800 font-semibold text-sm">Seçilen Tarife: <span className="text-blue-900 font-bold">{TARIFF_RATES[data.buildingType as BuildingType] || 2.4} TL/kWh</span></span>
+                        </div>
+                        <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-xl flex items-start gap-3 text-left mb-8">
+                             <Info className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
+                             <p className="text-sm text-yellow-800 leading-snug">
+                                <strong>İpucu:</strong> Girdiğiniz fatura tutarı ve bina tipi üzerinden yıllık tüketiminiz (kWh) hesaplanacaktır.
+                             </p>
+                        </div>
+                        <div className="flex gap-4">
+                             <Button variant="ghost" className="flex-1" onClick={() => setStep('PROFILE')}>&larr; Geri</Button>
+                             <Button className="flex-[2] py-6 text-lg bg-energy-500 hover:bg-energy-600 text-white shadow-lg shadow-energy-200" onClick={onCalculate}>
+                                Analizi Başlat
+                             </Button>
+                        </div>
+                    </div>
+                )}
+            </CardContent></Card>
         </div>
     );
 };
 
-const AdminDashboard = ({ onLogout, settings, updateSettings }: { onLogout: () => void, settings: GlobalSettings, updateSettings: (s: GlobalSettings) => void }) => {
-    const [leads, setLeads] = useState<Lead[]>([]);
-    const [localSettings, setLocalSettings] = useState<GlobalSettings>(settings);
-    const [activeTab, setActiveTab] = useState<'leads' | 'design' | 'settings'>('leads');
-    const [toastMessage, setToastMessage] = useState<string | null>(null);
+// --- ResultView Component ---
+const ResultView = ({ result, onReset, inputData, leadSubmitted, setLeadSubmitted, isCustomerView }: any) => {
+    const [activeScenario, setActiveScenario] = useState<ScenarioType>('OPTIMAL');
+    const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
-    useEffect(() => {
-        setLeads(LeadService.getAll());
-        setLocalSettings(SettingsService.get());
-    }, []);
+    if (!result) return null;
 
-    const showToast = (msg: string) => {
-        setToastMessage(msg);
-        setTimeout(() => setToastMessage(null), 3000);
-    }
-    const handleSaveSettings = () => {
-        SettingsService.update(localSettings);
-        updateSettings(localSettings);
-        showToast("Sistem parametreleri güncellendi.");
+    const currentData = result.scenarios[activeScenario];
+    const roi = currentData.roiYears;
+    
+    // Sustainability Calculation
+    const treeEquivalent = Math.round(currentData.co2Saved * 17); // 1 Ton CO2 approx 17 trees
+
+    // Narrative Logic
+    const selfConsumptionPercent = Math.round((currentData.selfConsumptionRate));
+    const monthlySaving = currentData.monthlySavings.toLocaleString('tr-TR');
+    
+    // Senaryo Adı Eşleşmesi
+    const SCENARIO_LABELS: Record<string, string> = {
+        'OPTIMAL': 'Optimal',
+        'CONSERVATIVE': 'Muhafazakar',
+        'AGGRESSIVE': 'Agresif'
     };
-    const handleStatusUpdate = (id: string, newStatus: string) => {
-        LeadService.updateStatus(id, newStatus as LeadStatus);
-        setLeads(LeadService.getAll());
-        showToast("Müşteri durumu güncellendi.");
+
+    const handleDownloadPDF = async () => {
+        const reportElement = document.getElementById('report-content');
+        if(!reportElement) return;
+
+        window.scrollTo(0, 0); 
+        setIsGeneratingPdf(true);
+        reportElement.classList.add('pdf-mode');
+
+        // 🔥 CRITICAL FIX: Trigger Resize Event so Charts redraw at 1200px width
+        await new Promise(resolve => setTimeout(resolve, 100)); // Wait for CSS class
+        window.dispatchEvent(new Event('resize')); // Force Recharts update
+        await new Promise(resolve => setTimeout(resolve, 1500)); // Wait for animation/render
+
+        try {
+            const canvas = await html2canvas(reportElement, { 
+                scale: 2, // High quality
+                useCORS: true, 
+                backgroundColor: '#ffffff',
+                scrollY: 0,
+                y: 0,
+                // Force fixed width capture to match PDF mode
+                width: 1200,
+                windowWidth: 1200
+            });
+
+            const imgData = canvas.toDataURL('image/png');
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pdfWidth = pdf.internal.pageSize.getWidth(); // 210mm
+            const pdfHeight = pdf.internal.pageSize.getHeight(); // 297mm
+
+            const imgWidth = canvas.width;
+            const imgHeight = canvas.height;
+
+            // FIT TO ONE PAGE LOGIC
+            const widthRatio = pdfWidth / imgWidth;
+            const heightRatio = pdfHeight / imgHeight;
+            const ratio = Math.min(widthRatio, heightRatio);
+
+            const finalWidth = imgWidth * ratio;
+            const finalHeight = imgHeight * ratio;
+
+            const x = (pdfWidth - finalWidth) / 2;
+            const y = 0; 
+
+            pdf.addImage(imgData, 'PNG', x, y, finalWidth, finalHeight);
+            pdf.save(`SolarSmart_Rapor_${result.city.name}.pdf`);
+
+        } catch (err) {
+            console.error("PDF Fail:", err);
+            alert("PDF oluşturulurken hata meydana geldi.");
+        } finally {
+            reportElement.classList.remove('pdf-mode');
+            setIsGeneratingPdf(false);
+            // Revert charts to normal size
+            window.dispatchEvent(new Event('resize'));
+        }
     };
 
     return (
-        <div className="container mx-auto px-4 py-8 pb-20">
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl font-bold text-navy-900">Yönetim Paneli</h1>
-                <Button variant="outline" onClick={onLogout} className="text-red-600 hover:bg-red-50 hover:text-red-700 border-red-200"><LogOut className="h-4 w-4 mr-2" /> Çıkış</Button>
+        <div className="container mx-auto px-4 py-8 pb-24">
+            <div className="flex justify-between items-center mb-8 no-print">
+                <h1 className="text-2xl font-bold text-navy-900">Fizibilite Raporu</h1>
+                <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={handleDownloadPDF} disabled={isGeneratingPdf}>
+                        {isGeneratingPdf ? <Loader2 className="animate-spin mr-2"/> : <Download className="mr-2"/>} PDF İndir
+                    </Button>
+                    {!isCustomerView && (
+                        <Button variant="ghost" size="sm" onClick={onReset} className="text-red-600"><LogOut className="mr-2"/> Çıkış</Button>
+                    )}
+                </div>
             </div>
-            <Tabs className="w-full">
-                <TabsList className="mb-6 w-full justify-start border-b rounded-none p-0 h-auto bg-transparent border-slate-200">
-                    <TabsTrigger active={activeTab === 'leads'} onClick={() => setActiveTab('leads')}><Users className="h-4 w-4 mr-2" /> Müşteri Adayları</TabsTrigger>
-                    <TabsTrigger active={activeTab === 'design'} onClick={() => setActiveTab('design')}><PenTool className="h-4 w-4 mr-2" /> Design Studio</TabsTrigger>
-                    <TabsTrigger active={activeTab === 'settings'} onClick={() => setActiveTab('settings')}><SettingsIcon className="h-4 w-4 mr-2" /> Sistem Ayarları</TabsTrigger>
-                </TabsList>
-                <TabsContent active={activeTab === 'leads'}>
-                    <Card><CardHeader><CardTitle>Gelen Başvurular ({leads.length})</CardTitle></CardHeader><CardContent><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200"><tr><th className="px-4 py-3">Tarih</th><th className="px-4 py-3">Ad Soyad</th><th className="px-4 py-3">Lokasyon</th><th className="px-4 py-3">Telefon</th><th className="px-4 py-3">Sistem</th><th className="px-4 py-3">Durum</th></tr></thead><tbody className="divide-y divide-slate-100">{leads.map((lead) => (<tr key={lead.id} className="hover:bg-slate-50"><td className="px-4 py-3 text-slate-500">{new Date(lead.createdAt).toLocaleDateString('tr-TR')}</td><td className="px-4 py-3 font-medium text-navy-900">{lead.fullName}</td><td className="px-4 py-3">{lead.city}</td><td className="px-4 py-3">{lead.phone}</td><td className="px-4 py-3 font-semibold text-energy-600">{lead.systemSize} kWp</td><td className="px-4 py-3"><select className="bg-transparent text-xs font-medium border-none focus:ring-0 cursor-pointer" value={lead.status} onChange={(e) => handleStatusUpdate(lead.id, e.target.value)}><option value="New">Yeni</option><option value="Contacted">Arandı</option><option value="OfferSent">Teklif Verildi</option><option value="Closed">Satış Kapandı</option></select></td></tr>))}</tbody></table></div></CardContent></Card>
-                </TabsContent>
-                <TabsContent active={activeTab === 'design'}><DesignStudio leads={leads} /></TabsContent>
-                <TabsContent active={activeTab === 'settings'}>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <Card><CardHeader><CardTitle>Finansal</CardTitle></CardHeader><CardContent className="space-y-4"><div className="space-y-2"><label className="text-sm font-medium">Dolar Kuru</label><Input type="number" value={localSettings.usdRate} onChange={(e) => setLocalSettings({...localSettings, usdRate: Number(e.target.value)})} /></div></CardContent></Card>
-                        <Card><CardHeader><CardTitle>Maliyet</CardTitle></CardHeader><CardContent className="space-y-4"><div className="space-y-2"><label className="text-sm font-medium">Kurulum $/kW</label><Input type="number" value={localSettings.systemCostPerKw} onChange={(e) => setLocalSettings({...localSettings, systemCostPerKw: Number(e.target.value)})} /></div></CardContent></Card>
+
+            <div id="report-content" className="bg-slate-50 p-4 md:p-8 rounded-xl relative max-w-[1200px] mx-auto">
+                
+                {/* PDF Spacer */}
+                <div className="hidden pdf-spacer h-[40px]"></div>
+
+                {/* PDF Header */}
+                <div id="pdf-header" className="hidden pdf-header text-center mb-10 border-b pb-4">
+                    <div className="flex justify-center mb-4"><Logo className="scale-125 origin-center" /></div>
+                    <div className="flex justify-center items-center gap-4 mt-2">
+                        <p className="text-slate-500">Tarih: {new Date().toLocaleDateString('tr-TR')}</p>
+                        <span className="text-slate-300">|</span>
+                        <p className="text-energy-600 font-bold uppercase tracking-wider">
+                            {SCENARIO_LABELS[activeScenario]} Senaryosu
+                        </p>
                     </div>
-                    <div className="mt-6 flex justify-end"><Button onClick={handleSaveSettings} size="lg" className="bg-green-600 hover:bg-green-700">Kaydet</Button></div>
-                </TabsContent>
-            </Tabs>
-            <Toast show={!!toastMessage} message={toastMessage || ''} onClose={() => setToastMessage(null)} />
+                </div>
+                
+                {/* 1. Executive Summary (Hikaye Modu) */}
+                <div id="pdf-executive" className="bg-blue-50 border-l-8 border-energy-500 rounded-r-xl p-8 mb-12 shadow-sm">
+                    <h3 className="text-xl font-bold text-navy-900 mb-4 flex items-center gap-2">
+                        <Award className="h-6 w-6 text-energy-600" />
+                        Yönetici Özeti
+                    </h3>
+                    <p className="text-slate-700 text-lg leading-relaxed">
+                        Sayın Kullanıcı, <span className="font-bold text-navy-900">{inputData.locationName || result.city.name}</span> bölgesindeki mülkünüz için 
+                        <span className="font-bold text-navy-900"> {currentData.systemSizeKW} kWp</span> gücünde bir güneş enerjisi sistemi kurulumu öngörülmüştür. 
+                        
+                        Bu sistem, yıllık enerji ihtiyacınızın <span className="font-bold text-green-700">%{selfConsumptionPercent}'ini</span> doğrudan karşılayarak, 
+                        elektrik faturanızda aylık ortalama <span className="font-bold text-green-700">{monthlySaving} TL</span> tasarruf sağlayacaktır.
+                        
+                        Yatırımınız kendini yaklaşık <span className="font-bold text-navy-900">{roi} yılda</span> amorti edecek olup, 
+                        sistemin 25 yıllık ekonomik ömrü boyunca size toplam <span className="font-bold text-navy-900">{currentData.netProfit25Years.toLocaleString('tr-TR')} TL</span> net nakit akışı yaratacaktır.
+                    </p>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+                    <div className="lg:col-span-2 space-y-12">
+                        
+                        {/* 2. Key Metrics Grid */}
+                        <div id="pdf-stats">
+                            <Tabs className="w-full no-print mb-6"><TabsList className="w-full grid grid-cols-3"><TabsTrigger active={activeScenario==='OPTIMAL'} onClick={()=>setActiveScenario('OPTIMAL')}>Optimal</TabsTrigger><TabsTrigger active={activeScenario==='CONSERVATIVE'} onClick={()=>setActiveScenario('CONSERVATIVE')}>Muhafazakar</TabsTrigger><TabsTrigger active={activeScenario==='AGGRESSIVE'} onClick={()=>setActiveScenario('AGGRESSIVE')}>Agresif</TabsTrigger></TabsList></Tabs>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                                <Card className="border-t-4 border-t-energy-500"><CardContent className="p-6 text-center"><div className="text-3xl font-bold text-navy-900">{currentData.systemSizeKW} <span className="text-sm font-normal text-slate-500">kWp</span></div><span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Sistem Gücü</span></CardContent></Card>
+                                <Card className="border-t-4 border-t-blue-500"><CardContent className="p-6 text-center"><div className="text-3xl font-bold text-navy-900">${currentData.totalCostUSD.toLocaleString()}</div><span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Yatırım Tutarı</span></CardContent></Card>
+                                <Card className="border-t-4 border-t-green-500"><CardContent className="p-6 text-center"><div className="text-3xl font-bold text-green-600">{currentData.roiYears} <span className="text-sm font-normal text-slate-500">Yıl</span></div><span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Amortisman</span></CardContent></Card>
+                                <Card className="border-t-4 border-t-purple-500"><CardContent className="p-6 text-center"><div className="text-3xl font-bold text-navy-900">{currentData.netProfit25Years.toLocaleString()} <span className="text-sm font-normal text-slate-500">₺</span></div><span className="text-xs font-bold text-slate-400 uppercase tracking-wider">25 Yıllık Getiri</span></CardContent></Card>
+                            </div>
+                        </div>
+
+                        {/* 3. Charts Area */}
+                        <div id="pdf-charts" className="space-y-12">
+                            <div className="h-[400px] w-full"><ProductionChart result={currentData} /></div>
+                            <div className="h-[400px] w-full"><FinancialComparisonChart result={currentData} /></div>
+                            <div className="h-[400px] w-full"><ROIChart result={currentData} /></div>
+                        </div>
+
+                        {/* 4. Sustainability Card */}
+                        <div id="pdf-sustainability" className="mt-8">
+                            <div className="bg-green-50 border border-green-200 rounded-xl p-8 flex flex-col md:flex-row items-center gap-8 shadow-sm">
+                                <div className="bg-green-100 p-6 rounded-full shrink-0">
+                                    <Leaf className="h-12 w-12 text-green-600" />
+                                </div>
+                                <div className="text-center md:text-left flex-1">
+                                    <h4 className="text-xl font-bold text-green-900 mb-2">Gezegen İçin Büyük Adım</h4>
+                                    <p className="text-green-800 text-lg">
+                                        Bu sistem sayesinde yılda <span className="font-bold">{currentData.co2Saved} Ton</span> karbon salınımını engelliyorsunuz. 
+                                        Bu, her yıl doğaya <span className="font-bold text-2xl mx-1">{treeEquivalent}</span> adet ağaç dikmeye eşdeğerdir.
+                                    </p>
+                                </div>
+                                <div className="hidden md:block opacity-20">
+                                    <Trees className="h-24 w-24 text-green-900" />
+                                </div>
+                            </div>
+                            <div className="hidden pdf-header text-center mt-8 pt-4 border-t text-sm text-slate-400">
+                                SolarSmart Teknoloji A.Ş. tarafından oluşturulmuştur.
+                            </div>
+                        </div>
+                    </div>
+
+                    {!isCustomerView && (
+                        <div className="lg:col-span-1 right-column no-print">
+                            <Card className="sticky top-6 border-t-4 border-energy-500 shadow-xl">
+                                <CardHeader className="bg-slate-50 border-b"><CardTitle className="text-center">{leadSubmitted ? 'Talebiniz Alındı' : 'Ücretsiz Teklif İste'}</CardTitle></CardHeader>
+                                <CardContent className="p-6">
+                                    {leadSubmitted ? (
+                                        <div className="text-center py-8">
+                                            <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                                                <CheckCircle className="h-8 w-8 text-green-600" />
+                                            </div>
+                                            <h3 className="text-xl font-bold text-navy-900 mb-2">Başvurunuz Alındı!</h3>
+                                            <p className="text-slate-600">Uzmanlarımız en kısa sürede sizinle iletişime geçecektir. Rapor linkiniz e-posta adresinize gönderildi.</p>
+                                        </div>
+                                    ) : (
+                                        <LeadForm inputData={inputData} resultData={currentData} onSuccess={() => setLeadSubmitted(true)} />
+                                    )}
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
 };
@@ -730,215 +400,187 @@ const AdminDashboard = ({ onLogout, settings, updateSettings }: { onLogout: () =
 // --- Main App Component ---
 
 const App = () => {
-  const [currentView, setCurrentView] = useState<View>('WIZARD');
-  
-  // Dynamic API Key Management
-  const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string>('');
-  const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
-  const [apiKeyInput, setApiKeyInput] = useState('');
-
-  // Wizard State
-  const [wizardStep, setWizardStep] = useState<WizardStep>('ROOF_MAP');
+  const [view, setView] = useState<View>('LANDING');
+  const [step, setStep] = useState<WizardStep>('ROOF_MAP');
   const [inputData, setInputData] = useState<CalculationInput>({
-    cityId: 0,
-    roofArea: 0,
-    roofDirection: RoofDirection.SOUTH,
-    billAmount: 0,
-    buildingType: BuildingType.MESKEN,
-    consumptionProfile: ConsumptionProfile.DENGELI
+    cityId: 6, roofArea: 0, roofDirection: RoofDirection.SOUTH, billAmount: 0, 
+    buildingType: BuildingType.MESKEN, consumptionProfile: ConsumptionProfile.DENGELI
   });
-
-  // Result State
   const [result, setResult] = useState<SimulationResult | null>(null);
   const [leadSubmitted, setLeadSubmitted] = useState(false);
-  
-  // Admin & Settings State
   const [settings, setSettings] = useState<GlobalSettings>(DEFAULT_SETTINGS);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isCustomerView, setIsCustomerView] = useState(false);
+  
+  const [isLoadingProposal, setIsLoadingProposal] = useState(false);
+  const [proposalError, setProposalError] = useState<string | null>(null);
 
   useEffect(() => {
     setSettings(SettingsService.get());
     setIsAuthenticated(AuthService.isAuthenticated());
 
-    // API Key Logic
-    const storedKey = localStorage.getItem('google_maps_api_key');
-    
-    // Logic update: Since we now have a valid hardcoded key, we don't need to force the dialog
-    // unless the developer explicitly changed the variable back to the placeholder.
-    const isPlaceholder = (DEFAULT_GOOGLE_MAPS_API_KEY as string) === "YOUR_GOOGLE_MAPS_API_KEY";
-    
-    if (storedKey) {
-        setGoogleMapsApiKey(storedKey);
-    } else if (!isPlaceholder) {
-        setGoogleMapsApiKey(DEFAULT_GOOGLE_MAPS_API_KEY);
-        // Do NOT show dialog if hardcoded key is valid.
-    } else {
-        // Only show dialog if we are in the Map step AND the key is invalid
-        if (wizardStep === 'ROOF_MAP') {
-             setShowApiKeyDialog(true);
-        }
+    const urlParams = new URLSearchParams(window.location.search);
+    const proposalId = urlParams.get('proposalId');
+
+    if (proposalId) {
+        loadProposal(proposalId);
     }
-  }, [wizardStep]);
+  }, []);
 
-  const handleSaveApiKey = () => {
-      if(apiKeyInput.trim()) {
-          localStorage.setItem('google_maps_api_key', apiKeyInput);
-          setGoogleMapsApiKey(apiKeyInput);
-          setShowApiKeyDialog(false);
-      }
-  };
-
-  const handleAdminAccess = () => {
-      if (isAuthenticated) {
-          setCurrentView('ADMIN_DASHBOARD');
-      } else {
-          setCurrentView('ADMIN_LOGIN');
+  const loadProposal = async (id: string) => {
+      setIsLoadingProposal(true);
+      setProposalError(null);
+      try {
+          const lead = await DB.getLeadById(id);
+          if (lead) {
+              if (lead.inputData) {
+                  try {
+                      const simResult = calculateSolarSystem(lead.inputData, SettingsService.get());
+                      setResult(simResult);
+                      setInputData(lead.inputData);
+                      setView('RESULT');
+                      setIsCustomerView(true);
+                      setLeadSubmitted(true);
+                  } catch(err) {
+                       console.error("Calculation error for proposal:", err);
+                       setProposalError("Rapor verileri hesaplanırken bir hata oluştu.");
+                  }
+              } else {
+                  setProposalError("Bu rapor için gerekli veri bulunamadı.");
+              }
+          } else {
+              setProposalError("Rapor bulunamadı veya süresi dolmuş.");
+          }
+      } catch (e) {
+          console.error(e);
+          setProposalError("Sunucu hatası.");
+      } finally {
+          setIsLoadingProposal(false);
       }
   };
 
   const handleCalculate = () => {
-      try {
-          const res = calculateSolarSystem(inputData, settings);
-          setResult(res);
-          setCurrentView('RESULT');
-      } catch (e) {
-          alert('Hesaplama hatası. Lütfen tüm alanları doldurunuz.');
-      }
+    try {
+      const simulationResult = calculateSolarSystem(inputData, settings);
+      setResult(simulationResult);
+      setView('RESULT');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error) {
+      alert("Hata oluştu.");
+    }
   };
 
-  const resetApp = () => {
-      setWizardStep('ROOF_MAP');
-      setInputData({ 
-          cityId: 0, 
-          roofArea: 0, 
-          roofDirection: RoofDirection.SOUTH, 
-          billAmount: 0,
-          buildingType: BuildingType.MESKEN,
-          consumptionProfile: ConsumptionProfile.DENGELI
-      });
-      setResult(null);
-      setLeadSubmitted(false);
-      setCurrentView('WIZARD');
+  const handleReset = () => {
+    setResult(null);
+    // Reset to Landing unless logged in as admin? No, reset goes to wizard usually, but let's go to Landing for full reset.
+    // Actually, going to WIZARD is better for UX after "Reset", but let's go to Landing for "Home" feel.
+    setView('LANDING'); 
+    setStep('ROOF_MAP');
+    setLeadSubmitted(false);
+    setInputData(prev => ({ ...prev, roofArea: 0, billAmount: 0, coordinates: undefined, locationName: undefined }));
+    window.history.pushState({}, '', window.location.pathname);
+    setIsCustomerView(false);
+    setProposalError(null);
+  };
+
+  const handleAdminAccess = () => {
+      if (isAuthenticated) setView('ADMIN_DASHBOARD');
+      else setView('ADMIN_LOGIN');
   };
 
   const handleLogout = () => {
     AuthService.logout();
     setIsAuthenticated(false);
-    setCurrentView('WIZARD');
+    setView('LANDING');
   };
 
-  const renderHeader = () => (
-    <header className="bg-navy-900 text-white py-4 shadow-lg sticky top-0 z-50 print:hidden">
-      <div className="container mx-auto px-4 flex justify-between items-center">
-        <div 
-            className="flex items-center gap-2 cursor-pointer"
-            onClick={resetApp}
-        >
-          <div className="bg-energy-500 p-2 rounded-full">
-            <Sun className="h-6 w-6 text-white" />
+  if (isLoadingProposal) {
+      return (
+          <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center">
+              <Loader2 className="h-12 w-12 text-energy-500 animate-spin mb-4" />
+              <h2 className="text-xl font-bold text-navy-900">Raporunuz Hazırlanıyor...</h2>
           </div>
-          <span className="text-xl font-bold tracking-tight">SolarSmart</span>
-        </div>
-        <nav className="flex gap-4">
-            <Button 
-                variant="ghost" 
-                className="text-white hover:bg-navy-800 hover:text-energy-500"
-                onClick={() => setCurrentView('WIZARD')}
-            >
-                <Home className="h-4 w-4 mr-2" />
-                Hesapla
-            </Button>
-            <Button 
-                variant="ghost" 
-                className="text-white hover:bg-navy-800 hover:text-energy-500"
-                onClick={handleAdminAccess}
-            >
-                <LayoutDashboard className="h-4 w-4 mr-2" />
-                Panel
-            </Button>
-        </nav>
-      </div>
-    </header>
-  );
+      )
+  }
+
+  if (proposalError) {
+      return (
+          <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+              <div className="bg-white p-8 rounded-xl shadow-lg max-w-md text-center">
+                  <div className="mx-auto bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mb-4">
+                      <FileQuestion className="h-8 w-8 text-red-600" />
+                  </div>
+                  <h2 className="text-xl font-bold text-navy-900 mb-2">Hata</h2>
+                  <p className="text-slate-600 mb-6 text-sm">{proposalError}</p>
+                  <Button onClick={handleReset}>Ana Sayfaya Dön</Button>
+              </div>
+          </div>
+      )
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
-      {renderHeader()}
-      <main>
-        {currentView === 'WIZARD' && (
-            <Wizard 
-                step={wizardStep} 
-                setStep={setWizardStep} 
-                data={inputData} 
-                setData={setInputData} 
-                onCalculate={handleCalculate}
-                apiKey={googleMapsApiKey}
-            />
-        )}
-        
-        {currentView === 'RESULT' && (
-            <ResultView 
-                result={result} 
-                onReset={resetApp} 
-                inputData={inputData}
-                leadSubmitted={leadSubmitted}
-                setLeadSubmitted={setLeadSubmitted}
-            />
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-energy-200">
+      {/* Header hidden on Landing Page */}
+      {!isCustomerView && view !== 'LANDING' && (
+          <header className="bg-navy-900 border-b border-navy-800 sticky top-0 z-40 shadow-md">
+            <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
+              <div className="flex items-center gap-2 cursor-pointer group" onClick={handleReset}>
+                <Logo />
+              </div>
+              <div className="flex items-center gap-3">
+                 <Button variant="ghost" size="sm" onClick={handleAdminAccess} className="text-slate-300 hover:text-white hover:bg-navy-800">
+                    {isAuthenticated ? <LayoutDashboard className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
+                 </Button>
+              </div>
+            </div>
+          </header>
+      )}
+
+      <main className={view === 'LANDING' ? 'pb-0' : 'pb-20'}>
+        {/* LANDING PAGE INTEGRATION */}
+        {view === 'LANDING' && (
+             <Hero
+                trustBadge={{
+                  text: "Geleceğe Yatırım Yapın",
+                  icons: ["☀️"]
+                }}
+                headline={{
+                  line1: "Güneşin Gücü",
+                  line2: "Geleceğin Enerjisi"
+                }}
+                subtitle="SolarSmart ile çatı güneş enerjisi potansiyelinizi saniyeler içinde keşfedin, yatırım geri dönüş sürenizi hesaplayın ve ücretsiz teklif alın."
+                buttons={{
+                  primary: {
+                    text: "Ücretsiz Hesapla",
+                    onClick: () => setView('WIZARD')
+                  },
+                  secondary: {
+                    text: "Yönetici Girişi",
+                    onClick: handleAdminAccess
+                  }
+                }}
+             />
         )}
 
-        {currentView === 'ADMIN_LOGIN' && (
-            <AdminLogin 
-                onLogin={() => { 
-                    setIsAuthenticated(true); 
-                    setCurrentView('ADMIN_DASHBOARD'); 
-                }} 
-            />
-        )}
-
-        {currentView === 'ADMIN_DASHBOARD' && (
-            <AdminDashboard 
-                onLogout={handleLogout}
-                settings={settings}
-                updateSettings={setSettings}
-            />
-        )}
+        {view === 'WIZARD' && <Wizard step={step} setStep={setStep} data={inputData} setData={setInputData} onCalculate={handleCalculate} apiKey={GOOGLE_MAPS_API_KEY} />}
+        {view === 'RESULT' && <ResultView result={result} onReset={handleReset} inputData={inputData} leadSubmitted={leadSubmitted} setLeadSubmitted={setLeadSubmitted} isCustomerView={isCustomerView} />}
+        {view === 'ADMIN_LOGIN' && <AdminLogin onLogin={() => { setIsAuthenticated(true); setView('ADMIN_DASHBOARD'); }} />}
+        {view === 'ADMIN_DASHBOARD' && <AdminDashboard onLogout={handleLogout} settings={settings} updateSettings={setSettings} />}
       </main>
 
-      {/* API Key Entry Modal */}
-      <Dialog 
-        isOpen={showApiKeyDialog} 
-        onClose={() => setShowApiKeyDialog(false)} 
-        title="Google Maps API Anahtarı"
-      >
-        <div className="space-y-4">
-            <div className="bg-blue-50 text-blue-800 p-3 rounded-md text-sm flex items-start gap-2">
-                <Info className="h-5 w-5 shrink-0 mt-0.5" />
-                <p>Harita özelliğini kullanmak için geçerli bir Google Maps API Anahtarı gereklidir. Anahtarınız tarayıcınızda yerel olarak saklanacaktır.</p>
-            </div>
-            
-            <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">API Anahtarınız</label>
-                <div className="relative">
-                    <Key className="absolute left-3 top-3 h-5 w-5 text-slate-400" />
-                    <Input 
-                        placeholder="AIzaSy..." 
-                        value={apiKeyInput}
-                        onChange={(e) => setApiKeyInput(e.target.value)}
-                        className="pl-10"
-                    />
-                </div>
-                <p className="text-xs text-slate-500">
-                    Anahtarınız yok mu? <a href="#" onClick={(e) => { e.preventDefault(); setShowApiKeyDialog(false); }} className="text-blue-600 hover:underline">Manuel giriş modunu kullanın.</a>
-                </p>
-            </div>
-
-            <div className="flex justify-end pt-2">
-                <Button onClick={handleSaveApiKey} className="bg-blue-600 hover:bg-blue-700 text-white">Kaydet ve Devam Et</Button>
-            </div>
+      {!isCustomerView && (view === 'WIZARD' || view === 'RESULT') && (
+      <footer className="bg-navy-900 text-slate-400 py-12 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 text-center text-xs">
+            &copy; {new Date().getFullYear()} SolarSmart Teknoloji A.Ş. Tüm hakları saklıdır.
         </div>
-      </Dialog>
+      </footer>
+      )}
     </div>
   );
 };
 
 export default App;
+// Helper icon
+const CheckCircle = ({ className }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+);

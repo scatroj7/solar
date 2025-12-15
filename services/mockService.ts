@@ -1,3 +1,4 @@
+
 import { Lead, GlobalSettings } from '../types';
 import { DEFAULT_SETTINGS } from '../constants';
 
@@ -43,6 +44,7 @@ export const LeadService = {
 
   updateStatus: (id: string, status: Lead['status']): void => {
     const leads = LeadService.getAll();
+    // FIX: Ensure spread operator is used correctly (...)
     const updated = leads.map(l => l.id === id ? { ...l, status } : l);
     localStorage.setItem(LEADS_KEY, JSON.stringify(updated));
   }
@@ -53,6 +55,7 @@ export const SettingsService = {
     const data = localStorage.getItem(SETTINGS_KEY);
     if (!data) return DEFAULT_SETTINGS;
     
+    // FIX: Ensure spread operator is used correctly (...)
     // Merge with default to ensure no missing keys if schema changes
     return { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
   },
