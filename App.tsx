@@ -520,8 +520,8 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-energy-200">
-      {/* Header hidden on Landing Page */}
-      {!isCustomerView && view !== 'LANDING' && (
+      {/* Header hidden on Landing Page and Admin Dashboard (which has its own header) */}
+      {!isCustomerView && view !== 'LANDING' && view !== 'ADMIN_DASHBOARD' && (
           <header className="bg-navy-900 border-b border-navy-800 sticky top-0 z-40 shadow-md">
             <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
               <div className="flex items-center gap-2 cursor-pointer group" onClick={handleReset}>

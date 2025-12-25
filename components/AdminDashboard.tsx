@@ -1,23 +1,60 @@
 import React, { useState, useEffect } from 'react';
 import { 
   LogOut, ExternalLink, PenTool, Zap, Settings as SettingsIcon, Save,
-  Users, Layout, DollarSign
+  Users, Layout, DollarSign, AlertTriangle, CheckCircle, XCircle, Gauge, Battery as BatteryIcon, Thermometer,
+  Plus, Trash2, Edit2, Box, X, Calculator, FileText, Send, Link as LinkIcon, Lock,
+  LayoutGrid, List, FileDown, MessageCircle, Share2, Mail, Loader2
 } from 'lucide-react';
 import { 
   Button, Card, CardContent, CardHeader, CardTitle, Input, Select, Tabs, TabsList, TabsTrigger, 
-  TabsContent, Toast, Badge, Logo
+  TabsContent, Toast, Badge, Logo, Dialog
 } from './ui/UIComponents';
 import { DB } from '../services/db';
-import { SettingsService } from '../services/mockService';
-import { Lead, LeadStatus, GlobalSettings, DesignResult } from '../types';
-import { MOCK_PANELS, MOCK_INVERTERS, CITIES } from '../constants';
+import { SettingsService, EquipmentService } from '../services/mockService';
+import { Lead, LeadStatus, GlobalSettings, DesignResult, ValidationReport, SolarPanel, Inverter, Battery, HeatPump, Proposal } from '../types';
+import { CITIES } from '../constants';
 import { performEngineeringDesign } from '../lib/engineeringCalculator';
+import { generateProposalPDF } from '../lib/pdfGenerator';
+import { ProposalTemplate } from './ProposalTemplate';
+import { EmailService } from '../services/emailService';
 
 // --- Design Studio Sub-Component ---
-const DesignStudio = ({ leads }: { leads: Lead[] }) => {
+interface DesignStudioProps {
+    leads: Lead[];
+    panels: SolarPanel[];
+    inverters: Inverter[];
+    batteries: Battery[];
+    heatPumps: HeatPump[];
+    onProposalGenerated: () => void; // Callback to refresh lead list
+    initialLeadId?: string; // NEW PROP: To pre-select lead from other tabs
+}
+
+const DesignStudio = ({ leads, panels, inverters, batteries, heatPumps, onProposalGenerated, initialLeadId }: DesignStudioProps) => {
     const [selectedLeadId, setSelectedLeadId] = useState<string>('');
-    const [selectedPanelId, setSelectedPanelId] = useState<string>('p1');
-    const [selectedInverterId, setSelectedInverterId] = useState<string>('inv1');
+    const [selectedPanelId, setSelectedPanelId] = useState<string>('');
+    const [selectedInverterId, setSelectedInverterId] = useState<string>('');
+    
+    // --- Sub-Tab Navigation State ---
+    const [activeSubTab, setActiveSubTab] = useState<'engineering' | 'commercial'>('engineering');
+
+    // Update defaults when props change
+    useEffect(() => {
+        if (panels.length > 0 && !selectedPanelId) setSelectedPanelId(panels[0].id);
+        if (inverters.length > 0 && !selectedInverterId) setSelectedInverterId(inverters[0].id);
+    }, [panels, inverters]);
+
+    // FIX: Auto-select lead if initialLeadId is provided OR if leads exist but none selected
+    useEffect(() => {
+        if (initialLeadId) {
+            setSelectedLeadId(initialLeadId);
+        } else if (!selectedLeadId && leads.length > 0) {
+            setSelectedLeadId(leads[0].id);
+        }
+    }, [leads, initialLeadId]);
+
+    const [selectedBatteryId, setSelectedBatteryId] = useState<string>('');
+    const [selectedHeatPumpId, setSelectedHeatPumpId] = useState<string>('');
+    
     const [tiltAngle, setTiltAngle] = useState<number>(20);
     const [isFlatRoof, setIsFlatRoof] = useState<boolean>(false);
     
@@ -26,6 +63,17 @@ const DesignStudio = ({ leads }: { leads: Lead[] }) => {
     
     const [designResult, setDesignResult] = useState<DesignResult | null>(null);
 
+    // --- COMMERCIAL STATE ---
+    const [commercialForm, setCommercialForm] = useState({
+        laborCost: 500,
+        overheadCost: 300,
+        marginPercent: 20, // 20% Markup
+        taxRate: 20
+    });
+    const [lastProposal, setLastProposal] = useState<Proposal | null>(null);
+    const [isSendingEmail, setIsSendingEmail] = useState(false);
+
+    // 1. Sync Data: Update form inputs when Lead Data changes (or ID changes)
     useEffect(() => {
         if(selectedLeadId) {
             const lead = leads.find(l => l.id === selectedLeadId);
@@ -37,269 +85,377 @@ const DesignStudio = ({ leads }: { leads: Lead[] }) => {
         }
     }, [selectedLeadId, leads]);
 
+    // 2. Reset UI: Only reset results/modal when the USER selects a NEW lead ID
+    useEffect(() => {
+        setDesignResult(null); // Reset result on lead change
+        setActiveSubTab('engineering'); // Reset tab to engineering
+        setLastProposal(null);
+    }, [selectedLeadId]);
+
     const handleDesign = () => {
         if (!selectedLeadId) return alert("Lütfen bir müşteri seçiniz.");
         const lead = leads.find(l => l.id === selectedLeadId);
         if (!lead) return;
 
-        const city = CITIES.find(c => c.name === lead.city) || CITIES[5]; 
-        const panel = MOCK_PANELS.find(p => p.id === selectedPanelId);
-        const inverter = MOCK_INVERTERS.find(i => i.id === selectedInverterId);
+        const city = CITIES.find(c => c.name === lead.city) || CITIES.find(c => c.id === 6); 
+        const panel = panels.find(p => p.id === selectedPanelId);
+        const inverter = inverters.find(i => i.id === selectedInverterId);
+        const battery = selectedBatteryId ? batteries.find(b => b.id === selectedBatteryId) : undefined;
+        const heatPump = selectedHeatPumpId ? heatPumps.find(h => h.id === selectedHeatPumpId) : undefined;
 
-        if (!city || !panel || !inverter) return alert("Veri hatası.");
+        if (!city || !panel || !inverter) {
+            console.error("Missing Data:", { city, panel, inverter });
+            return alert("Veri hatası: Seçilen donanım veritabanında bulunamadı.");
+        }
 
-        const result = performEngineeringDesign(lead.id, city, roofWidth, roofLength, panel, inverter, tiltAngle, isFlatRoof);
+        const result = performEngineeringDesign(
+            lead.id, 
+            city, 
+            roofWidth, 
+            roofLength, 
+            panel, 
+            inverter, 
+            tiltAngle, 
+            isFlatRoof,
+            battery,
+            heatPump
+        );
         setDesignResult(result);
+        
+        // FIX: Auto-switch to Commercial Tab if Engineering is Valid
+        if (result.engineeringReport.isValid) {
+            setActiveSubTab('commercial');
+        }
     };
 
-    const panelOptions = MOCK_PANELS.map(p => ({ label: `${p.brand} - ${p.powerW}W`, value: p.id }));
-    const inverterOptions = MOCK_INVERTERS.map(i => ({ label: `${i.brand} - ${i.powerKW}kW`, value: i.id }));
+    // Calculate Financials Live
+    const calculateFinancials = () => {
+        if(!designResult) return { hardware: 0, totalCost: 0, finalPrice: 0, profit: 0 };
+        
+        const panelCost = designResult.layoutAnalysis.totalPanelCount * designResult.selectedPanel.priceUSD;
+        const inverterCost = designResult.selectedInverter.priceUSD; 
+        const batteryCost = designResult.selectedBattery ? designResult.selectedBattery.priceUSD : 0;
+        const heatPumpCost = designResult.selectedHeatPump ? designResult.selectedHeatPump.priceUSD : 0;
+        const mountingCost = panelCost * 0.10; 
+
+        const hardwareTotal = panelCost + inverterCost + batteryCost + heatPumpCost + mountingCost;
+        const totalBaseCost = hardwareTotal + commercialForm.laborCost + commercialForm.overheadCost;
+        const profitAmount = totalBaseCost * (commercialForm.marginPercent / 100);
+        const finalPrice = totalBaseCost + profitAmount;
+
+        return {
+            hardware: hardwareTotal,
+            totalCost: totalBaseCost,
+            profit: profitAmount,
+            finalPrice: finalPrice
+        };
+    };
+
+    const financials = calculateFinancials();
+
+    const handleCreateProposal = async () => {
+        if (!designResult || !selectedLeadId) return;
+        
+        const settings = SettingsService.get();
+        const financials = calculateFinancials();
+
+        const newProposal: Omit<Proposal, 'id' | 'createdAt' | 'status'> = {
+            leadId: selectedLeadId,
+            validUntil: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString(),
+            systemSizeKW: designResult.layoutAnalysis.totalDCSizeKW,
+            panelModel: designResult.selectedPanel.model,
+            panelCount: designResult.layoutAnalysis.totalPanelCount,
+            inverterModel: designResult.selectedInverter.model,
+            batteryModel: designResult.selectedBattery?.model,
+            hardwareCostUSD: financials.hardware,
+            laborCostUSD: commercialForm.laborCost,
+            overheadCostUSD: commercialForm.overheadCost,
+            marginPercent: commercialForm.marginPercent,
+            taxRate: commercialForm.taxRate,
+            finalPriceUSD: financials.finalPrice,
+            finalPriceTL: financials.finalPrice * settings.usdRate,
+            usdRateSnapshot: settings.usdRate
+        };
+
+        const created = await DB.createProposal(newProposal);
+        setLastProposal(created);
+        onProposalGenerated(); // Refresh parent list
+    };
+
+    // --- Advanced Multi-Page PDF Trigger ---
+    const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+    const handleDownloadPDF = async () => {
+        if (lastProposal && designResult) {
+            const lead = leads.find(l => l.id === selectedLeadId);
+            if (lead) {
+                setIsGeneratingPdf(true);
+                await generateProposalPDF(lastProposal, lead, designResult);
+                setIsGeneratingPdf(false);
+            }
+        }
+    };
+
+    const handleSendEmail = async () => {
+        const lead = leads.find(l => l.id === selectedLeadId);
+        if(lead && lastProposal) {
+            setIsSendingEmail(true);
+            try {
+                // EmailJS Service Call
+                await EmailService.sendLeadNotification({
+                    ...lead,
+                    proposalId: lastProposal.id,
+                    proposalPriceUSD: lastProposal.finalPriceUSD
+                });
+                alert("Teklif başarıyla e-posta ile gönderildi.");
+            } catch (err) {
+                alert("E-posta gönderilemedi.");
+            } finally {
+                setIsSendingEmail(false);
+            }
+        }
+    };
+
     const leadOptions = leads.map(l => ({ label: `${l.fullName} (${l.city})`, value: l.id }));
-
-    const GridPreview = ({ result }: { result: DesignResult }) => {
-        const { roofDim, visualGrid } = result.layoutAnalysis;
-        const padding = 1;
-        const viewBoxW = roofDim.width + padding * 2;
-        const viewBoxH = roofDim.length + padding * 2;
-
-        return (
-            <div className="w-full bg-slate-100 rounded-lg p-4 flex justify-center border border-slate-300 overflow-hidden">
-                <svg 
-                    viewBox={`-${padding} -${padding} ${viewBoxW} ${viewBoxH}`} 
-                    className="max-h-[350px] w-auto border-2 border-dashed border-slate-400 bg-white shadow-sm"
-                    style={{ aspectRatio: `${roofDim.width}/${roofDim.length}` }}
-                >
-                    <rect x="0" y="0" width={roofDim.width} height={roofDim.length} fill="#f1f5f9" stroke="#94a3b8" strokeWidth="0.05" />
-                    {visualGrid.map((p, idx) => (
-                        <rect key={idx} x={p.x} y={p.y} width={p.w} height={p.h} fill="#0f172a" stroke="#334155" strokeWidth="0.02" opacity="0.9" />
-                    ))}
-                </svg>
-            </div>
-        )
-    };
+    const panelOptions = panels.map(p => ({ label: `${p.brand} - ${p.powerW}W (${p.priceUSD}$)`, value: p.id }));
+    const inverterOptions = inverters.map(i => ({ label: `${i.brand} - ${i.powerKW}kW (${i.priceUSD}$)`, value: i.id }));
+    const batteryOptions = [{ label: 'Batarya Yok', value: '' }, ...batteries.map(b => ({ label: `${b.brand} - ${b.capacityKWh}kWh (${b.priceUSD}$)`, value: b.id }))];
+    const heatPumpOptions = [{ label: 'Isı Pompası Yok', value: '' }, ...heatPumps.map(h => ({ label: `${h.brand} - ${h.thermalPowerKW}kW (${h.priceUSD}$)`, value: h.id }))];
 
     return (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* HIDDEN TEMPLATE FOR PDF GENERATION */}
+            {lastProposal && designResult && (
+                <ProposalTemplate 
+                    proposal={lastProposal} 
+                    lead={leads.find(l => l.id === selectedLeadId)!} 
+                    designResult={designResult} 
+                />
+            )}
+
             <Card className="border-t-4 border-t-purple-600 shadow-lg">
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><PenTool className="h-5 w-5 text-purple-600" /> Proje Tasarım Stüdyosu</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        <Select label="Müşteri (Lead)" options={leadOptions} value={selectedLeadId} onChange={e => setSelectedLeadId(e.target.value)} />
-                        <Select label="Panel Modeli" options={panelOptions} value={selectedPanelId} onChange={e => setSelectedPanelId(e.target.value)} />
-                        <Select label="İnverter Modeli" options={inverterOptions} value={selectedInverterId} onChange={e => setSelectedInverterId(e.target.value)} />
-                        <div className="space-y-4">
-                           <div className="flex gap-4">
-                                <Input label="Panel Açısı (°)" type="number" value={tiltAngle} onChange={e => setTiltAngle(Number(e.target.value))} />
-                                <div className="flex items-center pt-6">
-                                     <input type="checkbox" id="flatRoof" checked={isFlatRoof} onChange={e => setIsFlatRoof(e.target.checked)} className="mr-2 h-4 w-4" />
-                                     <label htmlFor="flatRoof" className="text-sm font-medium">Düz Çatı</label>
-                                </div>
-                           </div>
+                <CardHeader><CardTitle className="flex items-center gap-2"><PenTool className="h-5 w-5 text-purple-600" /> Proje Tasarım Stüdyosu</CardTitle></CardHeader>
+                <CardContent className="p-0">
+                    <Tabs className="w-full">
+                        <div className="px-6 border-b bg-slate-50/50">
+                            <TabsList>
+                                <TabsTrigger active={activeSubTab === 'engineering'} onClick={() => setActiveSubTab('engineering')}>Mühendislik Tasarımı</TabsTrigger>
+                                <TabsTrigger active={activeSubTab === 'commercial'} onClick={() => setActiveSubTab('commercial')} disabled={!designResult}>Teklif Oluştur</TabsTrigger>
+                            </TabsList>
                         </div>
-                        <Input label="Çatı Eni (m)" type="number" step="0.1" value={roofWidth} onChange={e => setRoofWidth(Number(e.target.value))} />
-                        <Input label="Çatı Boyu (m)" type="number" step="0.1" value={roofLength} onChange={e => setRoofLength(Number(e.target.value))} />
-                    </div>
-                    <div className="mt-6 flex justify-end">
-                        <Button onClick={handleDesign} className="bg-purple-600 hover:bg-purple-700 text-white"><Zap className="h-4 w-4 mr-2" /> Mühendislik Analizini Çalıştır</Button>
-                    </div>
+                        <div className="p-6">
+                            <TabsContent active={activeSubTab === 'engineering'}>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+                                    <Select label="Müşteri (Lead)" options={leadOptions} value={selectedLeadId} onChange={e => setSelectedLeadId(e.target.value)} />
+                                    <div className="space-y-4">
+                                        <div className="flex gap-4">
+                                            <Input label="Panel Açısı (°)" type="number" value={tiltAngle} onChange={e => setTiltAngle(Number(e.target.value))} />
+                                            <div className="flex items-center pt-6">
+                                                <input type="checkbox" id="flatRoof" checked={isFlatRoof} onChange={e => setIsFlatRoof(e.target.checked)} className="mr-2 h-4 w-4" />
+                                                <label htmlFor="flatRoof" className="text-sm font-medium">Düz Çatı</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <Input label="Çatı Eni (m)" type="number" value={roofWidth} onChange={e => setRoofWidth(Number(e.target.value))} />
+                                    <Input label="Çatı Boyu (m)" type="number" value={roofLength} onChange={e => setRoofLength(Number(e.target.value))} />
+                                </div>
+                                <div className="border-t pt-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                                        <Select label="Panel Modeli" options={panelOptions} value={selectedPanelId} onChange={e => setSelectedPanelId(e.target.value)} />
+                                        <Select label="İnverter Modeli" options={inverterOptions} value={selectedInverterId} onChange={e => setSelectedInverterId(e.target.value)} />
+                                        <Select label="Batarya" options={batteryOptions} value={selectedBatteryId} onChange={e => setSelectedBatteryId(e.target.value)} />
+                                        <Select label="Isı Pompası" options={heatPumpOptions} value={selectedHeatPumpId} onChange={e => setSelectedHeatPumpId(e.target.value)} />
+                                    </div>
+                                </div>
+                                <div className="mt-8 flex justify-end"><Button onClick={handleDesign} className="bg-purple-600 hover:bg-purple-700 text-white"><Zap className="h-4 w-4 mr-2" /> Analizi Çalıştır</Button></div>
+                            </TabsContent>
+                            <TabsContent active={activeSubTab === 'commercial'}>
+                                {designResult?.engineeringReport.isValid ? (
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+                                        <div className="space-y-6">
+                                            <h3 className="font-bold text-lg flex items-center gap-2"><Calculator className="h-5 w-5"/> Maliyet Kalemleri</h3>
+                                            <div className="bg-slate-50 p-4 rounded-lg space-y-3">
+                                                <div className="flex justify-between text-sm"><span>Donanım:</span><span className="font-bold">${financials.hardware.toLocaleString()}</span></div>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <Input label="İşçilik ($)" type="number" value={commercialForm.laborCost} onChange={e => setCommercialForm({...commercialForm, laborCost: Number(e.target.value)})} />
+                                                <Input label="Genel ($)" type="number" value={commercialForm.overheadCost} onChange={e => setCommercialForm({...commercialForm, overheadCost: Number(e.target.value)})} />
+                                            </div>
+                                            <Input label="Kâr Marjı (%)" type="number" value={commercialForm.marginPercent} onChange={e => setCommercialForm({...commercialForm, marginPercent: Number(e.target.value)})} />
+                                        </div>
+                                        <div className="bg-navy-900 text-white p-8 rounded-xl flex flex-col justify-between">
+                                            <div>
+                                                <h4 className="text-slate-400 uppercase text-xs font-bold mb-6">Teklif Özeti</h4>
+                                                <div className="space-y-4">
+                                                    <div className="flex justify-between border-b border-navy-700 pb-4"><span>Toplam Maliyet</span><span>${financials.totalCost.toLocaleString()}</span></div>
+                                                    <div className="flex justify-between border-b border-navy-700 pb-4"><span>Kâr</span><span className="text-green-400">+${financials.profit.toLocaleString()}</span></div>
+                                                </div>
+                                            </div>
+                                            <div className="mt-8 pt-8 border-t border-navy-700">
+                                                <div className="text-4xl font-bold">${financials.finalPrice.toLocaleString()}</div>
+                                                <Button onClick={handleCreateProposal} className="w-full mt-6 bg-energy-500 hover:bg-energy-600 text-white py-4 font-bold shadow-lg">TEKLİFİ OLUŞTUR</Button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : <div className="p-12 text-center text-red-600">Mühendislik onayı alınamadı.</div>}
+                            </TabsContent>
+                        </div>
+                    </Tabs>
                 </CardContent>
             </Card>
-            {designResult && (
-                <>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <Card><CardHeader><CardTitle>Dizi Tasarımı</CardTitle></CardHeader><CardContent>{designResult.stringDesign.isCompatible ? <Badge variant="success">UYGUN</Badge> : <Badge variant="warning">HATALI</Badge>}</CardContent></Card>
-                    <Card><CardHeader><CardTitle>DC Kapasite</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{designResult.layoutAnalysis.totalDCSizeKW} kWp</CardContent></Card>
+
+            <Dialog open={!!lastProposal} onClose={() => setLastProposal(null)}>
+                <div className="text-center p-4">
+                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle className="h-8 w-8 text-green-600" /></div>
+                    <h3 className="text-xl font-bold text-navy-900 mb-2">Teklif Hazır!</h3>
+                    <p className="text-slate-600 mb-6 text-sm">Kurumsal yatırım teklifi dosyası başarıyla oluşturuldu.</p>
+                    <div className="grid grid-cols-2 gap-3 mb-6">
+                        <Button onClick={handleDownloadPDF} variant="outline" className="w-full border-blue-200 text-blue-700" disabled={isGeneratingPdf}>
+                            {isGeneratingPdf ? <Loader2 className="animate-spin h-4 w-4" /> : <FileDown className="h-4 w-4 mr-2" />} PDF İndir
+                        </Button>
+                        <Button onClick={handleSendEmail} variant="outline" className="w-full border-purple-200 text-purple-700" disabled={isSendingEmail}>
+                            {isSendingEmail ? <Loader2 className="animate-spin h-4 w-4" /> : <Mail className="h-4 w-4 mr-2" />} Mail Gönder
+                        </Button>
+                    </div>
+                    <Button className="w-full bg-navy-900 text-white" onClick={() => window.open(`/?proposalId=${lastProposal?.leadId}`, '_blank')}>Önizleme Sayfasını Aç</Button>
+                    <Button variant="ghost" className="w-full text-slate-400 mt-2" onClick={() => setLastProposal(null)}>Kapat</Button>
                 </div>
-                <Card className="mt-6"><CardContent className="p-8"><GridPreview result={designResult} /></CardContent></Card>
-                </>
+            </Dialog>
+
+            {designResult && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2 space-y-6">
+                        <Card className="overflow-hidden">
+                            <CardHeader className="bg-slate-50 border-b pb-4"><CardTitle>Yerleşim Planı</CardTitle></CardHeader>
+                            <CardContent className="p-6 bg-slate-100/50">
+                                <div className="grid grid-cols-3 gap-4 mt-6">
+                                    <div className="text-center"><div className="text-2xl font-bold">{designResult.layoutAnalysis.totalPanelCount}</div><div className="text-xs text-slate-500 uppercase">Toplam Panel</div></div>
+                                    <div className="text-center"><div className="text-2xl font-bold text-energy-600">{designResult.layoutAnalysis.totalDCSizeKW} kWp</div><div className="text-xs text-slate-500 uppercase">DC Güç</div></div>
+                                    <div className="text-center"><div className="text-2xl font-bold">{designResult.layoutAnalysis.packingEfficiency}%</div><div className="text-xs text-slate-500 uppercase">Doluluk</div></div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+                </div>
             )}
         </div>
     );
 };
 
-// --- Settings Sub-Component ---
-const SettingsPanel = ({ settings, onSave }: { settings: GlobalSettings, onSave: (s: GlobalSettings) => void }) => {
-    const [formData, setFormData] = useState<GlobalSettings>(settings);
-
-    const handleChange = (key: keyof GlobalSettings, value: string) => {
-        setFormData(prev => ({ ...prev, [key]: parseFloat(value) }));
-    };
-
-    const handleSave = () => {
-        onSave(formData);
-    };
-
-    return (
-        <Card className="border-t-4 border-t-slate-600 shadow-lg animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <CardHeader>
-                <CardTitle className="flex items-center gap-2"><SettingsIcon className="h-5 w-5 text-slate-600" /> Global Hesaplama Parametreleri</CardTitle>
-            </CardHeader>
-            <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    <Input 
-                        label="Dolar Kuru (TL)" 
-                        type="number" step="0.01" 
-                        value={formData.usdRate} 
-                        onChange={e => handleChange('usdRate', e.target.value)} 
-                    />
-                    <Input 
-                        label="Elektrik Birim Fiyatı (TL/kWh)" 
-                        type="number" step="0.01" 
-                        value={formData.electricityPrice} 
-                        onChange={e => handleChange('electricityPrice', e.target.value)} 
-                    />
-                    <Input 
-                        label="Panel Gücü (Watt)" 
-                        type="number" step="5" 
-                        value={formData.panelWattage} 
-                        onChange={e => handleChange('panelWattage', e.target.value)} 
-                    />
-                    <Input 
-                        label="Sistem Maliyeti ($/kW)" 
-                        type="number" step="10" 
-                        value={formData.systemCostPerKw} 
-                        onChange={e => handleChange('systemCostPerKw', e.target.value)} 
-                    />
-                    <Input 
-                        label="Enerji Enflasyonu (Yıllık %)" 
-                        type="number" step="0.01" 
-                        value={formData.energyInflationRate} 
-                        onChange={e => handleChange('energyInflationRate', e.target.value)} 
-                    />
-                    <Input 
-                        label="Panel Eskime Oranı (Yıllık %)" 
-                        type="number" step="0.001" 
-                        value={formData.panelDegradationRate} 
-                        onChange={e => handleChange('panelDegradationRate', e.target.value)} 
-                    />
-                </div>
-                <div className="mt-8 flex justify-end">
-                    <Button onClick={handleSave} className="bg-slate-800 hover:bg-slate-900 text-white">
-                        <Save className="h-4 w-4 mr-2" /> Ayarları Kaydet
-                    </Button>
-                </div>
-            </CardContent>
-        </Card>
-    );
-};
-
-// --- Main Admin Dashboard Component ---
-export const AdminDashboard = ({ onLogout, settings, updateSettings }: { onLogout: () => void, settings: GlobalSettings, updateSettings: (s: GlobalSettings) => void }) => {
+export const AdminDashboard = ({ onLogout, settings, updateSettings }: { 
+    onLogout: () => void, 
+    settings: GlobalSettings, 
+    updateSettings: (s: GlobalSettings) => void 
+}) => {
+    const [activeTab, setActiveTab] = useState('leads');
     const [leads, setLeads] = useState<Lead[]>([]);
-    const [localSettings, setLocalSettings] = useState<GlobalSettings>(settings);
-    const [activeTab, setActiveTab] = useState<'leads' | 'design' | 'settings'>('leads');
-    const [toastMessage, setToastMessage] = useState<string | null>(null);
+    const [viewMode, setViewMode] = useState<'LIST' | 'KANBAN'>('LIST');
+    const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+    const [panels, setPanels] = useState<SolarPanel[]>([]);
+    const [inverters, setInverters] = useState<Inverter[]>([]);
+    const [batteries, setBatteries] = useState<Battery[]>([]);
+    const [heatPumps, setHeatPumps] = useState<HeatPump[]>([]);
 
     useEffect(() => {
-        const load = async () => {
-            const data = await DB.getAllLeads();
-            setLeads(data);
-        };
-        load();
-        setLocalSettings(SettingsService.get());
-    }, []);
+        const loadData = async () => {
+             const l = await DB.getAllLeads();
+             setLeads(l);
+             setPanels(EquipmentService.getPanels());
+             setInverters(EquipmentService.getInverters());
+             setBatteries(EquipmentService.getBatteries());
+             setHeatPumps(EquipmentService.getHeatPumps());
+        }
+        loadData();
+    }, [refreshTrigger]);
 
-    const showToast = (msg: string) => {
-        setToastMessage(msg);
-        setTimeout(() => setToastMessage(null), 3000);
-    }
-    
-    const handleStatusUpdate = async (id: string, newStatus: string) => {
-        await DB.updateLeadStatus(id, newStatus as LeadStatus);
-        const data = await DB.getAllLeads();
-        setLeads(data);
-        showToast(`Durum güncellendi.`);
+    const handleRefresh = () => setRefreshTrigger(prev => prev + 1);
+
+    const [designLeadId, setDesignLeadId] = useState<string>('');
+    const handleOpenDesign = (leadId: string) => {
+        setDesignLeadId(leadId);
+        setActiveTab('design');
     };
 
-    const handleSettingsUpdate = (newSettings: GlobalSettings) => {
-        SettingsService.update(newSettings);
-        setLocalSettings(newSettings);
-        updateSettings(newSettings); // Propagate up to App
-        showToast("Ayarlar başarıyla güncellendi.");
+    const handleQuickDownload = async (lead: Lead) => {
+        if (!lead.proposalId) return alert("Teklif bulunamadı.");
+        const proposals = await DB.getProposalsByLead(lead.id);
+        const proposal = proposals.find(p => p.id === lead.proposalId) || proposals[0];
+        if (proposal) generateProposalPDF(proposal, lead, null);
     };
 
-    const handleViewProposal = (id: string) => {
-        const url = `${window.location.origin}/?proposalId=${id}`;
-        window.open(url, '_blank');
+    const KanbanBoard = () => {
+        const columns: { id: LeadStatus, title: string, color: string }[] = [
+            { id: 'New', title: 'Yeni Başvuru', color: 'bg-blue-100 text-blue-800' },
+            { id: 'Contacted', title: 'Görüşüldü', color: 'bg-yellow-100 text-yellow-800' },
+            { id: 'OfferSent', title: 'Teklif Gönderildi', color: 'bg-purple-100 text-purple-800' },
+            { id: 'Closed', title: 'Satış Kapandı', color: 'bg-green-100 text-green-800' },
+        ];
+        return (
+            <div className="flex gap-4 overflow-x-auto pb-4 h-[calc(100vh-250px)]">
+                {columns.map(col => (
+                    <div key={col.id} className="min-w-[300px] w-full bg-slate-100 rounded-xl p-3 flex flex-col">
+                        <div className={`flex justify-between items-center px-3 py-2 rounded-lg mb-3 ${col.color}`}>
+                            <h4 className="font-bold text-sm">{col.title}</h4>
+                            <span className="bg-white/50 px-2 py-0.5 rounded text-xs font-bold">{leads.filter(l => l.status === col.id).length}</span>
+                        </div>
+                        <div className="flex-1 overflow-y-auto space-y-3">
+                            {leads.filter(l => l.status === col.id).map(lead => (
+                                <div key={lead.id} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
+                                    <div className="flex justify-between mb-2"><h5 className="font-bold text-navy-900 text-sm">{lead.fullName}</h5><span className="text-xs text-slate-400">{lead.city}</span></div>
+                                    <div className="flex gap-2 pt-2 border-t">
+                                        <Button size="sm" variant="outline" onClick={() => handleOpenDesign(lead.id)} className="flex-1 text-xs">Tasarla</Button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
     };
 
     return (
-        <div className="container mx-auto px-4 py-8 pb-20 max-w-7xl">
-            <div className="bg-navy-900 rounded-xl p-6 flex justify-between items-center mb-8 shadow-lg">
-                <Logo />
-                <Button variant="outline" onClick={onLogout} className="text-red-200 border-red-900 hover:bg-red-900 hover:text-white"><LogOut className="h-4 w-4 mr-2" /> Çıkış</Button>
-            </div>
-
-            <Tabs className="w-full">
-                <TabsList className="mb-6">
-                    <TabsTrigger active={activeTab === 'leads'} onClick={() => setActiveTab('leads')}><Users className="h-4 w-4 mr-2"/> Müşteri Adayları</TabsTrigger>
-                    <TabsTrigger active={activeTab === 'design'} onClick={() => setActiveTab('design')}><Layout className="h-4 w-4 mr-2"/> Design Studio</TabsTrigger>
-                    <TabsTrigger active={activeTab === 'settings'} onClick={() => setActiveTab('settings')}><DollarSign className="h-4 w-4 mr-2"/> Parametreler</TabsTrigger>
-                </TabsList>
-
-                <TabsContent active={activeTab === 'leads'}>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {leads.map((lead) => (
-                            <Card key={lead.id} className="hover:shadow-md transition-shadow">
-                                <CardHeader className="bg-slate-50 border-b border-slate-100 pb-3">
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <h4 className="font-bold text-navy-900">{lead.fullName}</h4>
-                                            <p className="text-xs text-slate-500">{new Date(lead.createdAt).toLocaleDateString('tr-TR')}</p>
-                                        </div>
-                                        <Badge variant={lead.status === 'New' ? 'info' : 'success'}>{lead.status}</Badge>
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="pt-4 space-y-3">
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-500">Şehir:</span>
-                                        <span className="font-medium">{lead.city}</span>
-                                    </div>
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-500">Sistem:</span>
-                                        <span className="font-bold text-energy-600">{lead.systemSize} kWp</span>
-                                    </div>
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-500">Maliyet:</span>
-                                        <span className="font-medium">${lead.estimatedCost.toLocaleString()}</span>
-                                    </div>
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-500">Tel:</span>
-                                        <a href={`tel:${lead.phone}`} className="text-blue-600 hover:underline">{lead.phone}</a>
-                                    </div>
-                                    
-                                    <div className="pt-3 border-t border-slate-100 flex gap-2">
-                                        <Select 
-                                            className="h-9 text-xs flex-1"
-                                            options={[
-                                                {label: 'Yeni', value: 'New'},
-                                                {label: 'Arandı', value: 'Contacted'},
-                                                {label: 'Teklif', value: 'OfferSent'},
-                                                {label: 'Satış', value: 'Closed'},
-                                            ]}
-                                            value={lead.status}
-                                            onChange={(e) => handleStatusUpdate(lead.id, e.target.value)}
-                                        />
-                                        <Button size="sm" variant="outline" onClick={() => handleViewProposal(lead.id)} title="Raporu Gör">
-                                            <ExternalLink className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        ))}
-                    </div>
-                    {leads.length === 0 && <p className="text-center text-slate-500 py-10">Henüz kayıt yok.</p>}
-                </TabsContent>
-                
-                <TabsContent active={activeTab === 'design'}><DesignStudio leads={leads} /></TabsContent>
-                
-                <TabsContent active={activeTab === 'settings'}>
-                    <SettingsPanel settings={localSettings} onSave={handleSettingsUpdate} />
-                </TabsContent>
-            </Tabs>
-            <Toast show={!!toastMessage} message={toastMessage || ''} onClose={() => setToastMessage(null)} />
+        <div className="min-h-screen bg-slate-50">
+            <header className="bg-navy-900 text-white shadow-lg sticky top-0 z-30 h-16 flex items-center justify-between px-6">
+                <Logo className="scale-75 origin-left" />
+                <Button variant="ghost" size="sm" onClick={onLogout} className="text-red-400"><LogOut className="h-5 w-5" /></Button>
+            </header>
+            <main className="max-w-7xl mx-auto px-4 py-8">
+                <Tabs className="w-full">
+                    <TabsList className="w-full justify-start bg-white border rounded-lg p-1 mb-6 shadow-sm inline-flex">
+                        <TabsTrigger active={activeTab === 'leads'} onClick={() => setActiveTab('leads')} className="flex-1">Müşteriler</TabsTrigger>
+                        <TabsTrigger active={activeTab === 'design'} onClick={() => setActiveTab('design')} className="flex-1">Design Studio</TabsTrigger>
+                        <TabsTrigger active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} className="flex-1">Ayarlar</TabsTrigger>
+                    </TabsList>
+                    <TabsContent active={activeTab === 'leads'}>
+                         <Card>
+                            <CardHeader className="flex flex-row items-center justify-between">
+                                <CardTitle>Gelen Başvurular</CardTitle>
+                                <div className="flex bg-slate-100 p-1 rounded-lg">
+                                    <button onClick={() => setViewMode('LIST')} className={`p-1.5 rounded ${viewMode === 'LIST' ? 'bg-white shadow' : 'text-slate-500'}`}><List className="h-4 w-4" /></button>
+                                    <button onClick={() => setViewMode('KANBAN')} className={`p-1.5 rounded ${viewMode === 'KANBAN' ? 'bg-white shadow' : 'text-slate-500'}`}><LayoutGrid className="h-4 w-4" /></button>
+                                </div>
+                            </CardHeader>
+                            <CardContent>{viewMode === 'LIST' ? (
+                                <table className="w-full text-sm text-left">
+                                    <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b"><tr><th className="px-4 py-3">Ad Soyad</th><th className="px-4 py-3">Şehir</th><th className="px-4 py-3">Durum</th><th className="px-4 py-3 text-right">İşlem</th></tr></thead>
+                                    <tbody>{leads.map(lead => (
+                                        <tr key={lead.id} className="border-b hover:bg-slate-50">
+                                            <td className="px-4 py-3 font-medium">{lead.fullName}</td>
+                                            <td className="px-4 py-3">{lead.city}</td>
+                                            <td className="px-4 py-3"><Badge variant={lead.status === 'New' ? 'info' : 'default'}>{lead.status}</Badge></td>
+                                            <td className="px-4 py-3 text-right"><Button size="sm" variant="outline" onClick={() => handleOpenDesign(lead.id)}>Tasarla</Button></td>
+                                        </tr>
+                                    ))}</tbody>
+                                </table>
+                            ) : <KanbanBoard />}</CardContent>
+                         </Card>
+                    </TabsContent>
+                    <TabsContent active={activeTab === 'design'}>
+                        <DesignStudio leads={leads} panels={panels} inverters={inverters} batteries={batteries} heatPumps={heatPumps} onProposalGenerated={handleRefresh} initialLeadId={designLeadId} />
+                    </TabsContent>
+                </Tabs>
+            </main>
         </div>
     );
 };

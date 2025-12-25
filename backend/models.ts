@@ -1,3 +1,4 @@
+
 // NOTE: This file represents the Server-Side MongoDB Schema logic.
 // In a real Next.js app, this would be in models/Calculation.ts and models/Settings.ts
 
@@ -55,4 +56,43 @@ const SettingsSchema = new Schema<ISettings>({
   updatedAt: { type: Date, default: Date.now }
 });
 
+// --- NEW EQUIPMENT SCHEMAS (v1.1) ---
+
+const PanelSchema = new Schema({
+    brand: String,
+    model: String,
+    powerW: Number,
+    priceUSD: Number,
+    voc: Number,
+    isc: Number,
+    // ... other technical fields
+});
+
+const InverterSchema = new Schema({
+    brand: String,
+    model: String,
+    powerKW: Number,
+    priceUSD: Number,
+    mpptCount: Number,
+    // ... other technical fields
+});
+
+const BatterySchema = new Schema({
+    brand: String,
+    model: String,
+    capacityKWh: Number,
+    priceUSD: Number,
+    compatibleInverters: [String]
+});
+
+const HeatPumpSchema = new Schema({
+    brand: String,
+    model: String,
+    thermalPowerKW: Number,
+    cop: Number,
+    priceUSD: Number
+});
+
 // export const SettingsModel = mongoose.models.Settings || mongoose.model<ISettings>('Settings', SettingsSchema);
+// export const PanelModel = mongoose.models.Panel || mongoose.model('Panel', PanelSchema);
+// ... exports for others

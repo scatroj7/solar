@@ -1,11 +1,17 @@
 
-import { Lead, GlobalSettings } from '../types';
-import { DEFAULT_SETTINGS } from '../constants';
+import { Lead, GlobalSettings, SolarPanel, Inverter, Battery, HeatPump } from '../types';
+import { DEFAULT_SETTINGS, MOCK_PANELS, MOCK_INVERTERS, MOCK_BATTERIES, MOCK_HEATPUMPS } from '../constants';
 
 // Simulating a database using localStorage for the demo environment
 const LEADS_KEY = 'solarsmart_leads';
 const SETTINGS_KEY = 'solarsmart_settings';
 const AUTH_KEY = 'solarsmart_auth_token';
+
+// Equipment Keys
+const EQ_PANELS_KEY = 'solarsmart_eq_panels';
+const EQ_INVERTERS_KEY = 'solarsmart_eq_inverters';
+const EQ_BATTERIES_KEY = 'solarsmart_eq_batteries';
+const EQ_HEATPUMPS_KEY = 'solarsmart_eq_heatpumps';
 
 export const AuthService = {
   login: (password: string): boolean => {
@@ -63,4 +69,31 @@ export const SettingsService = {
   update: (settings: GlobalSettings): void => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }
+};
+
+// --- NEW EQUIPMENT SERVICE ---
+export const EquipmentService = {
+    getPanels: (): SolarPanel[] => {
+        const data = localStorage.getItem(EQ_PANELS_KEY);
+        return data ? JSON.parse(data) : MOCK_PANELS;
+    },
+    savePanels: (items: SolarPanel[]) => localStorage.setItem(EQ_PANELS_KEY, JSON.stringify(items)),
+
+    getInverters: (): Inverter[] => {
+        const data = localStorage.getItem(EQ_INVERTERS_KEY);
+        return data ? JSON.parse(data) : MOCK_INVERTERS;
+    },
+    saveInverters: (items: Inverter[]) => localStorage.setItem(EQ_INVERTERS_KEY, JSON.stringify(items)),
+
+    getBatteries: (): Battery[] => {
+        const data = localStorage.getItem(EQ_BATTERIES_KEY);
+        return data ? JSON.parse(data) : MOCK_BATTERIES;
+    },
+    saveBatteries: (items: Battery[]) => localStorage.setItem(EQ_BATTERIES_KEY, JSON.stringify(items)),
+
+    getHeatPumps: (): HeatPump[] => {
+        const data = localStorage.getItem(EQ_HEATPUMPS_KEY);
+        return data ? JSON.parse(data) : MOCK_HEATPUMPS;
+    },
+    saveHeatPumps: (items: HeatPump[]) => localStorage.setItem(EQ_HEATPUMPS_KEY, JSON.stringify(items)),
 };

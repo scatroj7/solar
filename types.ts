@@ -1,4 +1,5 @@
 
+
 export enum RoofDirection {
   SOUTH = 'Güney',
   SOUTH_EAST = 'Güney-Doğu',
@@ -27,7 +28,7 @@ export enum BuildingType {
 export enum ConsumptionProfile {
   GUNDUZ = 'Gündüz Ağırlıklı', // 08:00 - 18:00
   AKSAM = 'Akşam Ağırlıklı',   // 18:00 sonrası
-  DENGELI = '7/24 Dengeli'     // Fabrika / Home Office
+  DENGELI = '7/24 Dengeli'     // Fabrika / Home Office'
 }
 
 export interface CityData {
@@ -99,7 +100,7 @@ export interface SimulationResult {
   input: CalculationInput;
 }
 
-export type LeadStatus = 'New' | 'Contacted' | 'OfferSent' | 'Closed';
+export type LeadStatus = 'New' | 'Contacted' | 'OfferSent' | 'Closed' | 'Rejected';
 
 // DB'ye kaydedilecek ve oradan okunacak asıl Müşteri Modeli
 export interface Lead {
@@ -116,6 +117,36 @@ export interface Lead {
   createdAt: string;
   // Raporu tekrar render etmek için gerekli input verisi
   inputData: CalculationInput; 
+  // Optional: Link to the active proposal if exists
+  proposalId?: string;
+  proposalPriceUSD?: number;
+}
+
+// --- NEW: Commercial Proposal Interface (v1.2) ---
+export interface Proposal {
+  id: string;
+  leadId: string;
+  createdAt: string; // ISO Date
+  validUntil: string; // +15 days default
+  status: 'Draft' | 'Sent' | 'Viewed' | 'Accepted' | 'Rejected';
+  
+  // Technical Snapshot (Frozen at time of proposal)
+  systemSizeKW: number;
+  panelModel: string;
+  panelCount: number;
+  inverterModel: string;
+  batteryModel?: string;
+
+  // Commercials (The New Part)
+  hardwareCostUSD: number; // Panels + Inverters + Mounting + Battery
+  laborCostUSD: number; // Workmanship
+  overheadCostUSD: number; // Transport, Permits, etc.
+  marginPercent: number; // e.g., 20% profit margin
+  taxRate: number; // e.g., 20% VAT (KDV)
+  
+  finalPriceUSD: number; // Calculated selling price
+  finalPriceTL: number; // Converted based on rate at time of creation
+  usdRateSnapshot: number;
 }
 
 export interface GlobalSettings {
@@ -148,25 +179,76 @@ export interface Inverter {
   model: string;
   powerKW: number;     
   maxInputVoltage: number; 
-  mpptVoltageRange: { min: number; max: number }; 
-  maxInputCurrent: number; 
+  mpptVoltageRange: { min: number; max: number };
+  startVoltage: number; // Voltage required to start the inverter
+  
+  // New Engineering Fields
+  mpptCount: number;          // Number of independent MPPTs
+  maxStringsPerMppt: number;  // Physical inputs per MPPT
+  maxCurrentPerMppt: number;  // Max Isc allowed per MPPT (Amps)
+  
   priceUSD: number;
+}
+
+// --- NEW EQUIPMENT TYPES (v1.1) ---
+
+export interface Battery {
+  id: string;
+  brand: string;
+  model: string;
+  capacityKWh: number; // e.g., 5, 10, 15
+  maxOutputKW: number;
+  compatibleInverters: string[]; // ['Huawei', 'Fronius', 'All']
+  priceUSD: number;
+}
+
+export interface HeatPump {
+  id: string;
+  brand: string;
+  model: string;
+  thermalPowerKW: number; // Heating Capacity
+  cop: number; // Coefficient of Performance (e.g., 4.5)
+  priceUSD: number;
+}
+
+export interface ElectricalConfig {
+  mpptId: number;
+  stringCount: number;
+  panelPerString: number;
+}
+
+export interface ValidationReport {
+  isValid: boolean;
+  acDcRatio: number; // DC Power / AC Power
+  ratioStatus: 'UNDERLOADED' | 'NOMINAL' | 'OPTIMAL' | 'CLIPPING';
+  electricalConfig: ElectricalConfig[];
+  voltageCheck: {
+    vocMax: number;
+    vmppMin: number;
+    minString: number;
+    maxString: number;
+  };
+  currentCheck: {
+    panelIsc: number;
+    inverterMaxI: number;
+    isSafe: boolean;
+  };
+  messages: { type: 'error' | 'warning' | 'success', text: string }[];
 }
 
 export interface DesignResult {
   leadId: string;
+  
+  // Equipment Selection
   selectedPanel: SolarPanel;
   selectedInverter: Inverter;
+  selectedBattery?: Battery | null;   // Optional Add-on
+  selectedHeatPump?: HeatPump | null; // Optional Add-on
+  
   tiltAngle: number;
   
-  stringDesign: {
-    minPanels: number;
-    maxPanels: number;
-    vocAtMinTemp: number; 
-    vmppAtMaxTemp: number; 
-    isCompatible: boolean;
-    reason?: string;
-  };
+  // Replaced simple stringDesign with advanced report
+  engineeringReport: ValidationReport;
 
   shadowAnalysis: {
     minRowSpacing: number; 
